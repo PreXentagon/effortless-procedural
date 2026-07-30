@@ -9,6 +9,11 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
@@ -58,6 +63,9 @@ import dev.huskuraft.effortless.building.replace.Replace;
 import dev.huskuraft.effortless.building.session.BatchBuildSession;
 import dev.huskuraft.effortless.building.structure.BuildMode;
 import dev.huskuraft.effortless.building.structure.builder.Structure;
+import dev.huskuraft.effortless.client.pattern.procedural.ProceduralContextCompiler;
+import dev.huskuraft.effortless.client.pattern.procedural.GenerationProgress;
+import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralPatternPreset;
 import dev.huskuraft.effortless.networking.packets.player.PlayerBuildPacket;
 import dev.huskuraft.effortless.networking.packets.player.PlayerCommandPacket;
 import dev.huskuraft.effortless.renderer.opertaion.children.BlockOperationRenderer;
@@ -68,15 +76,30 @@ import dev.huskuraft.effortless.session.config.SessionConfig;
 
 public final class EffortlessClientStructureBuilder extends StructureBuilder {
 
+    private static final int ASYNC_PREVIEW_POSITION_THRESHOLD = 4_096;
+    private static final int MAX_PROCEDURAL_PACKET_BYTES =
+            7 * 1024 * 1024;
+
     private final EffortlessClient entrance;
 
     private final Map<UUID, Context> contexts = new HashMap<>();
     private final Map<UUID, Context> historyContexts = new HashMap<>();
     private final Map<UUID, OperationResultStack> undoRedoStacks = new HashMap<>();
     private final AtomicReference<ResourceLocation> lastClientPlayerLevel = new AtomicReference<>();
+    private final ProceduralContextCompiler proceduralCompiler;
+    private final ExecutorService proceduralPreviewExecutor;
+    private String lastProceduralPreviewError = "";
+    private PreviewCompilationCache proceduralPreviewCache;
+    private AsyncPreviewJob proceduralPreviewJob;
 
     public EffortlessClientStructureBuilder(EffortlessClient entrance) {
         this.entrance = entrance;
+        this.proceduralCompiler = new ProceduralContextCompiler(entrance);
+        this.proceduralPreviewExecutor = Executors.newSingleThreadExecutor(task -> {
+            var thread = new Thread(task, "Effortless procedural preview");
+            thread.setDaemon(true);
+            return thread;
+        });
 
         getEntrance().getEventRegistry().getClientTickEvent().register(this::onClientTick);
     }
@@ -93,13 +116,73 @@ public final class EffortlessClientStructureBuilder extends StructureBuilder {
     public BuildResult updateContext(Player player, UnaryOperator<Context> updater) {
         var context = updater.apply(getContext(player));
         if (context.isFulfilled()) {
-            setContext(player, getContext(getPlayer()).newInteraction());
-
             var finalizedContext = context.finalize(player, BuildStage.INTERACT);
-            var clientContext = finalizedContext.withBuildType(BuildType.BUILD_CLIENT);
+            var compilation = compileProcedural(
+                    player,
+                    finalizedContext,
+                    false
+            );
+            if (!compilation.isSuccess()) {
+                setContext(player, context.newInteraction());
+                notifyProceduralFailure(player, compilation);
+                return BuildResult.CANCELED;
+            }
+            var outgoingContext = compilation.context().orElseThrow();
+            var outgoingPacket = new PlayerBuildPacket(
+                    getPlayer().getId(),
+                    outgoingContext
+            );
+            int packetBytes;
+            try {
+                packetBytes = compilation.positionCount() > 0
+                        ? measurePacketBytes(outgoingPacket)
+                        : 0;
+            } catch (RuntimeException exception) {
+                setContext(player, context.newInteraction());
+                notifyProceduralFailure(
+                        player,
+                        ProceduralContextCompiler.CompilationResult.failure(
+                                "Could not serialize the compiled placement",
+                                List.of(
+                                        exception.getClass().getSimpleName()
+                                                + ": "
+                                                + exception.getMessage()
+                                )
+                        )
+                );
+                return BuildResult.CANCELED;
+            }
+            if (compilation.positionCount() > 0) {
+                Effortless.LOGGER.info(
+                        "Compiled procedural placement: {} positions, "
+                                + "{} estimated temporary bytes, "
+                                + "{} serialized packet bytes",
+                        compilation.positionCount(),
+                        compilation.estimatedMemoryBytes(),
+                        packetBytes
+                );
+            }
+            if (packetBytes > MAX_PROCEDURAL_PACKET_BYTES) {
+                setContext(player, context.newInteraction());
+                notifyProceduralFailure(
+                        player,
+                        ProceduralContextCompiler.CompilationResult.failure(
+                                "Compiled placement packet is too large",
+                                List.of(
+                                        packetBytes + " bytes > "
+                                                + MAX_PROCEDURAL_PACKET_BYTES
+                                                + " safe bytes"
+                                )
+                        )
+                );
+                return BuildResult.CANCELED;
+            }
+            setContext(player, context.newInteraction());
+
+            var clientContext = outgoingContext.withBuildType(BuildType.BUILD_CLIENT);
             var result = new BatchBuildSession(getEntrance(), player, clientContext).commit();
-            getEntrance().getChannel().sendPacket(new PlayerBuildPacket(getPlayer().getId(), finalizedContext));
-            showContext(context.id(), 1024, player, context, result);
+            getEntrance().getChannel().sendPacket(outgoingPacket);
+            showContext(context.id(), 1024, player, outgoingContext, result);
 
             playSoundInBatch(player, result);
             showTooltip(context.id(), 1024, player, result.getTooltip());
@@ -332,10 +415,11 @@ public final class EffortlessClientStructureBuilder extends StructureBuilder {
 
     @Override
     public void resetAll() {
+        invalidateProceduralPreview();
+        lastProceduralPreviewError = "";
         lastClientPlayerLevel.set(null);
         contexts.clear();
         undoRedoStacks.clear();
-        getEntrance().getConfigStorage().update(config -> new ClientConfig(config.renderConfig(), config.patternConfig(), config.clipboardConfig()));
     }
 
     public EventResult onPlayerInteract(Player player, InteractionType type, InteractionHand hand) {
@@ -539,32 +623,38 @@ public final class EffortlessClientStructureBuilder extends StructureBuilder {
         var player = getPlayer();
 
         if (!isSessionValid(player)) {
+            invalidateProceduralPreview();
             resetContext(player);
             return;
         }
 
         if (!isPermissionGranted(player)) {
+            invalidateProceduralPreview();
             resetContext(player);
             return;
         }
 
         if (player.isDeadOrDying()) {
+            invalidateProceduralPreview();
             resetInteractions(player);
             return;
         }
 
         if (!player.getWorld().getDimensionId().location().equals(lastClientPlayerLevel.get())) {
+            invalidateProceduralPreview();
             resetInteractions(player);
             lastClientPlayerLevel.set(player.getWorld().getDimensionId().location());
             return;
         }
 
         if (getContext(player).isDisabled()) {
+            invalidateProceduralPreview();
             clearBuildMessage(player);
             return;
         }
 
         if (getEntrance().getConfigStorage().get().builderConfig().passiveMode() && !EffortlessKeys.PASSIVE_BUILD_MODIFIER.getKeyBinding().isDown() && !getContext(player).isBuilding()) {
+            cancelProceduralPreview();
             getEntrance().getClientManager().getTooltipRenderer().hideEntry(generateId(player.getId(), Context.class), 0, false);
             return;
         }
@@ -573,13 +663,40 @@ public final class EffortlessClientStructureBuilder extends StructureBuilder {
 
         var context1 = getContextTraced(player);
         var context = context1.withBuildType(BuildType.PREVIEW);
+        var localPreviewContext = context;
+        boolean previewReady = true;
+        boolean renderWithinLimit = context.getVolume()
+                <= getEntrance().getConfigStorage().get().renderConfig().maxRenderVolume();
+        if (renderWithinLimit) {
+            var compilation = compileProcedural(player, context, true);
+            if (compilation.isSuccess()) {
+                previewReady = !compilation.pending();
+                if (previewReady) {
+                    localPreviewContext = compilation.context().orElseThrow()
+                            .withBuildType(BuildType.PREVIEW);
+                }
+                lastProceduralPreviewError = "";
+            } else {
+                previewReady = false;
+                if (!compilation.message().isEmpty()
+                        && !compilation.message().equals(
+                                lastProceduralPreviewError
+                        )) {
+                    lastProceduralPreviewError = compilation.message();
+                    notifyProceduralFailure(player, compilation);
+                }
+            }
+        }
 
-        if (context.getVolume() > getEntrance().getConfigStorage().get().renderConfig().maxRenderVolume()) {
-            showContext(player.getId(), 0, player, context, null);
-            showTooltip(player.getId(), 0, player, OperationTooltip.build(context));
+        if (!renderWithinLimit || !previewReady) {
+            if (!renderWithinLimit) {
+                invalidateProceduralPreview();
+            }
+            showContext(player.getId(), 0, player, localPreviewContext, null);
+            showTooltip(player.getId(), 0, player, OperationTooltip.build(localPreviewContext));
         } else {
-            var result = new BatchBuildSession(getEntrance(), player, context.withBuildType(BuildType.PREVIEW)).commit();
-            showContext(player.getId(), 0, player, context, result);
+            var result = new BatchBuildSession(getEntrance(), player, localPreviewContext).commit();
+            showContext(player.getId(), 0, player, localPreviewContext, result);
             showTooltip(player.getId(), 0, player, result.getTooltip());
         }
 
@@ -599,6 +716,317 @@ public final class EffortlessClientStructureBuilder extends StructureBuilder {
         }
 
         getEntrance().getChannel().sendPacket(new PlayerBuildPacket(getPlayer().getId(), context));
+    }
+
+    private ProceduralContextCompiler.CompilationResult compileProcedural(
+            Player player,
+            Context context,
+            boolean allowAsyncPreview
+    ) {
+        var library = getEntrance().getProceduralConfigStorage().get();
+        if (!library.enabled()) {
+            invalidateProceduralPreview();
+            return ProceduralContextCompiler.CompilationResult.success(context, 0, 0L);
+        }
+        var resolution = library.resolvedActivePreset();
+        if (!resolution.isSuccess()) {
+            invalidateProceduralPreview();
+            return ProceduralContextCompiler.CompilationResult.failure(
+                    "The active procedural pattern could not be composed",
+                    resolution.errors()
+            );
+        }
+        if (context.buildState() != BuildState.PLACE_BLOCK) {
+            invalidateProceduralPreview();
+            return ProceduralContextCompiler.CompilationResult.success(context, 0, 0L);
+        }
+        if (!context.tracingResult().isSuccess()) {
+            invalidateProceduralPreview();
+            return ProceduralContextCompiler.CompilationResult.success(context, 0, 0L);
+        }
+        var preset = resolution.preset().orElseThrow();
+        if (preset.inspectExistingWorld()) {
+            // Existing neighbor state is a declared determinism input and can
+            // change without the Context changing, so it is never cached.
+            invalidateProceduralPreview();
+            return proceduralCompiler.compile(player, context, preset);
+        }
+        var key = new PreviewCompilationKey(
+                context.id(),
+                context.buildState(),
+                context.interactions(),
+                context.structure(),
+                context.pattern(),
+                context.configs(),
+                preset,
+                ProceduralContextCompiler.materialSourceFingerprint(
+                        player,
+                        preset
+                )
+        );
+        if (proceduralPreviewCache != null && proceduralPreviewCache.key().equals(key)) {
+            var cached = proceduralPreviewCache.result();
+            if (!cached.isSuccess()) {
+                return cached;
+            }
+            return ProceduralContextCompiler.CompilationResult.success(
+                    context.withPattern(cached.context().orElseThrow().pattern()),
+                    cached.positionCount(),
+                    cached.estimatedMemoryBytes()
+            );
+        }
+
+        var completed = completeAsyncPreviewIfReady(player, context, key);
+        if (completed != null) {
+            return completed;
+        }
+
+        if (!allowAsyncPreview) {
+            cancelProceduralPreview();
+            var result = proceduralCompiler.compile(player, context, preset);
+            proceduralPreviewCache = new PreviewCompilationCache(key, result);
+            return result;
+        }
+
+        if (proceduralPreviewJob != null
+                && proceduralPreviewJob.key.equals(key)) {
+            reportProceduralPreviewProgress(player, proceduralPreviewJob);
+            return ProceduralContextCompiler.CompilationResult.pending(
+                    context,
+                    proceduralPreviewJob.prepared.positionCount(),
+                    proceduralPreviewJob.prepared.estimatedMemoryBytes()
+            );
+        }
+
+        cancelProceduralPreview();
+        var preparation = proceduralCompiler.prepare(player, context, preset);
+        if (!preparation.isSuccess()) {
+            return preparation.failure().orElseThrow();
+        }
+        var prepared = preparation.prepared().orElseThrow();
+        if (prepared.positionCount() < ASYNC_PREVIEW_POSITION_THRESHOLD) {
+            var resolutionResult = proceduralCompiler.resolve(
+                    prepared,
+                    Thread.currentThread()::isInterrupted,
+                    GenerationProgress.NONE
+            );
+            var result = resolutionResult.isSuccess()
+                    ? proceduralCompiler.finish(
+                            prepared,
+                            resolutionResult.resolved().orElseThrow()
+                    )
+                    : ProceduralContextCompiler.CompilationResult.failure(
+                            resolutionResult.message(),
+                            resolutionResult.details()
+                    );
+            proceduralPreviewCache = new PreviewCompilationCache(key, result);
+            return result;
+        }
+
+        startAsyncPreview(player, key, prepared);
+        return ProceduralContextCompiler.CompilationResult.pending(
+                context,
+                prepared.positionCount(),
+                prepared.estimatedMemoryBytes()
+        );
+    }
+
+    private void startAsyncPreview(
+            Player player,
+            PreviewCompilationKey key,
+            ProceduralContextCompiler.PreparedCompilation prepared
+    ) {
+        var job = new AsyncPreviewJob(key, prepared);
+        job.future = proceduralPreviewExecutor.submit(() ->
+                proceduralCompiler.resolve(
+                        prepared,
+                        () -> job.cancelled.get()
+                                || Thread.currentThread().isInterrupted(),
+                        (stage, completed, total) -> job.progress.set(
+                                new PreviewProgress(stage, completed, total)
+                        )
+                )
+        );
+        proceduralPreviewJob = job;
+        player.sendMessage(Effortless.getSystemMessage(
+                Text.text(
+                        "Compiling procedural preview for "
+                                + prepared.positionCount() + " blocks..."
+                ).withStyle(ChatFormatting.GRAY)
+        ));
+    }
+
+    private ProceduralContextCompiler.CompilationResult
+    completeAsyncPreviewIfReady(
+            Player player,
+            Context context,
+            PreviewCompilationKey key
+    ) {
+        var job = proceduralPreviewJob;
+        if (job == null || !job.key.equals(key) || !job.future.isDone()) {
+            return null;
+        }
+        proceduralPreviewJob = null;
+        ProceduralContextCompiler.CompilationResult result;
+        try {
+            var resolution = job.future.get();
+            result = resolution.isSuccess()
+                    ? proceduralCompiler.finish(
+                            job.prepared,
+                            resolution.resolved().orElseThrow()
+                    )
+                    : ProceduralContextCompiler.CompilationResult.failure(
+                            resolution.message(),
+                            resolution.details()
+                    );
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            result = ProceduralContextCompiler.CompilationResult.failure(
+                    "Procedural preview compilation was interrupted",
+                    List.of()
+            );
+        } catch (ExecutionException exception) {
+            var cause = exception.getCause() == null
+                    ? exception
+                    : exception.getCause();
+            result = ProceduralContextCompiler.CompilationResult.failure(
+                    "Procedural preview worker failed",
+                    List.of(
+                            cause.getClass().getSimpleName() + ": "
+                                    + cause.getMessage()
+                    )
+            );
+        }
+        proceduralPreviewCache = new PreviewCompilationCache(key, result);
+        if (result.isSuccess()) {
+            player.sendMessage(Effortless.getSystemMessage(
+                    Text.text("Procedural preview ready")
+                            .withStyle(ChatFormatting.GREEN)
+            ));
+            return ProceduralContextCompiler.CompilationResult.success(
+                    context.withPattern(
+                            result.context().orElseThrow().pattern()
+                    ),
+                    result.positionCount(),
+                    result.estimatedMemoryBytes()
+            );
+        }
+        return result;
+    }
+
+    private void reportProceduralPreviewProgress(
+            Player player,
+            AsyncPreviewJob job
+    ) {
+        var progress = job.progress.get();
+        if (progress.total() <= 0) {
+            return;
+        }
+        int bucket = Math.min(
+                4,
+                progress.completed() * 4 / progress.total()
+        );
+        if (progress.stage() == job.reportedStage
+                && bucket == job.reportedBucket) {
+            return;
+        }
+        job.reportedStage = progress.stage();
+        job.reportedBucket = bucket;
+        player.sendMessage(Effortless.getSystemMessage(
+                Text.text(
+                        "Procedural preview "
+                                + progress.stage().name().toLowerCase(Locale.ROOT)
+                                + ": " + bucket * 25 + "%"
+                ).withStyle(ChatFormatting.GRAY)
+        ));
+    }
+
+    private void cancelProceduralPreview() {
+        var job = proceduralPreviewJob;
+        proceduralPreviewJob = null;
+        if (job != null) {
+            job.cancelled.set(true);
+            if (job.future != null) {
+                job.future.cancel(true);
+            }
+        }
+    }
+
+    private void invalidateProceduralPreview() {
+        cancelProceduralPreview();
+        proceduralPreviewCache = null;
+    }
+
+    private int measurePacketBytes(PlayerBuildPacket packet) {
+        var buffer = getEntrance().getChannel().createBuffer(packet);
+        try {
+            return buffer.readableBytes();
+        } finally {
+            buffer.release();
+        }
+    }
+
+    private void notifyProceduralFailure(
+            Player player,
+            ProceduralContextCompiler.CompilationResult failure
+    ) {
+        var message = Text.text("Procedural pattern: " + failure.message())
+                .withStyle(ChatFormatting.RED);
+        if (!failure.details().isEmpty()) {
+            message = message.append(
+                    Text.text(" (" + failure.details().get(0) + ")")
+                            .withStyle(ChatFormatting.GRAY)
+            );
+        }
+        player.sendMessage(Effortless.getSystemMessage(message));
+    }
+
+    private record PreviewCompilationKey(
+            UUID contextId,
+            BuildState buildState,
+            Context.Interactions interactions,
+            Structure structure,
+            Pattern pattern,
+            Context.Configs configs,
+            ProceduralPatternPreset preset,
+            long materialSourceFingerprint
+    ) {
+    }
+
+    private record PreviewCompilationCache(
+            PreviewCompilationKey key,
+            ProceduralContextCompiler.CompilationResult result
+    ) {
+    }
+
+    private record PreviewProgress(
+            GenerationProgress.Stage stage,
+            int completed,
+            int total
+    ) {
+
+        private static final PreviewProgress NONE =
+                new PreviewProgress(GenerationProgress.Stage.GENERATING, 0, 0);
+    }
+
+    private static final class AsyncPreviewJob {
+
+        private final PreviewCompilationKey key;
+        private final ProceduralContextCompiler.PreparedCompilation prepared;
+        private final AtomicBoolean cancelled = new AtomicBoolean();
+        private final AtomicReference<PreviewProgress> progress =
+                new AtomicReference<>(PreviewProgress.NONE);
+        private Future<ProceduralContextCompiler.ResolutionResult> future;
+        private GenerationProgress.Stage reportedStage;
+        private int reportedBucket = -1;
+
+        private AsyncPreviewJob(
+                PreviewCompilationKey key,
+                ProceduralContextCompiler.PreparedCompilation prepared
+        ) {
+            this.key = key;
+            this.prepared = prepared;
+        }
     }
 
     private void reloadContext(Player player) {

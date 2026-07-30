@@ -5,8 +5,10 @@ import java.util.Locale;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 import dev.huskuraft.universal.api.core.Item;
+import dev.huskuraft.universal.api.core.ItemStack;
 import dev.huskuraft.universal.api.core.Items;
 import dev.huskuraft.universal.api.gui.AbstractPanelScreen;
 import dev.huskuraft.universal.api.gui.button.Button;
@@ -28,11 +30,32 @@ public class EffortlessItemPickerScreen extends AbstractPanelScreen {
     protected EditBox searchEditBox;
     protected Button addButton;
     protected Button cancelButton;
+    private List<ItemStack> registryItems = List.of();
+    private final List<ItemStack> suppliedItems;
 
     public EffortlessItemPickerScreen(Entrance entrance, Predicate<Item> filter, Consumer<Item> consumer) {
-        super(entrance, Text.translate("effortless.item.picker.title"), PANEL_WIDTH_60, PANEL_HEIGHT_FULL);
+        this(
+                entrance,
+                Text.translate("effortless.item.picker.title"),
+                filter,
+                consumer,
+                null
+        );
+    }
+
+    public EffortlessItemPickerScreen(
+            Entrance entrance,
+            Text title,
+            Predicate<Item> filter,
+            Consumer<Item> consumer,
+            List<ItemStack> suppliedItems
+    ) {
+        super(entrance, title, PANEL_WIDTH_60, PANEL_HEIGHT_FULL);
         this.filter = filter;
         this.consumer = consumer;
+        this.suppliedItems = suppliedItems == null
+                ? null
+                : List.copyOf(suppliedItems);
     }
 
     @Override
@@ -49,6 +72,15 @@ public class EffortlessItemPickerScreen extends AbstractPanelScreen {
         });
 
         this.entries = addWidget(new ItemStackList(getEntrance(), getLeft() + PADDINGS_H, getTop() + PANEL_TITLE_HEIGHT_1 + PANEL_TITLE_HEIGHT_2, getWidth() - PADDINGS_H * 2 - 8, getHeight() - PANEL_TITLE_HEIGHT_1 - PANEL_TITLE_HEIGHT_2 - PANEL_BUTTON_ROW_HEIGHT_1));
+        this.registryItems = suppliedItems == null
+                ? StreamSupport.stream(Item.REGISTRY.spliterator(), false)
+                        .filter(filter)
+                        .map(Item::getDefaultStack)
+                        .toList()
+                : suppliedItems.stream()
+                        .filter(stack -> !stack.isEmpty())
+                        .filter(stack -> filter.test(stack.getItem()))
+                        .toList();
 
         this.cancelButton = addWidget(Button.builder(getEntrance(), Text.translate("effortless.item.picker.cancel"), button -> {
             detach();
@@ -71,21 +103,52 @@ public class EffortlessItemPickerScreen extends AbstractPanelScreen {
     }
 
     protected void setSearchResult(String string) {
+        if (suppliedItems != null) {
+            String query = string.startsWith("#")
+                    ? string.substring(1).toLowerCase(Locale.ROOT)
+                    : string.toLowerCase(Locale.ROOT);
+            entries.reset(registryItems.stream()
+                    .filter(itemStack -> matchesNameOrId(itemStack, query))
+                    .toList());
+            entries.setSelected(null);
+            entries.setScrollAmount(0);
+            return;
+        }
         if (string.startsWith("#")) {
             var searchTree = ClientContentFactory.getInstance().searchItemStack(SearchBy.TAG);
             entries.reset(searchTree.search(string.substring(1).toLowerCase(Locale.ROOT)).stream().filter(itemStack -> filter.test(itemStack.getItem())).toList());
         } else {
+            String query = string.toLowerCase(Locale.ROOT);
             var airSearchTree = SearchTree.of(List.of(Items.AIR.item().getDefaultStack()), items -> Stream.of(items.getName().getString().toLowerCase(Locale.ROOT)));
             var searchTree = ClientContentFactory.getInstance().searchItemStack(SearchBy.NAME);
-            entries.reset(
+            var searchResults =
                     Stream.concat(
-                            airSearchTree.search(string.toLowerCase(Locale.ROOT)).stream().filter(itemStack -> filter.test(itemStack.getItem())),
-                            searchTree.search(string.toLowerCase(Locale.ROOT)).stream().filter(itemStack -> filter.test(itemStack.getItem()))
-                    ).toList()
-            );
+                            airSearchTree.search(query).stream()
+                                    .filter(itemStack -> filter.test(itemStack.getItem())),
+                            searchTree.search(query).stream()
+                                    .filter(itemStack -> filter.test(itemStack.getItem()))
+                    ).toList();
+            if (searchResults.isEmpty()) {
+                searchResults = registryItems.stream()
+                        .filter(itemStack -> matchesNameOrId(itemStack, query))
+                        .toList();
+            }
+            entries.reset(searchResults);
         }
         entries.setSelected(null);
         entries.setScrollAmount(0);
+    }
+
+    private static boolean matchesNameOrId(ItemStack itemStack, String query) {
+        if (query.isEmpty()) {
+            return true;
+        }
+        return itemStack.getHoverName().getString()
+                        .toLowerCase(Locale.ROOT)
+                        .contains(query)
+                || itemStack.getItem().getId().getString()
+                        .toLowerCase(Locale.ROOT)
+                        .contains(query);
     }
 
 }

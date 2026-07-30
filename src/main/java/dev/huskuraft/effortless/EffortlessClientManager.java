@@ -23,13 +23,15 @@ import dev.huskuraft.universal.api.renderer.Shaders;
 import dev.huskuraft.universal.api.text.ChatFormatting;
 import dev.huskuraft.universal.api.text.Text;
 import dev.huskuraft.effortless.building.clipboard.SnapshotTransform;
+import dev.huskuraft.effortless.building.pattern.Pattern;
+import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralPatternLibrary;
 import dev.huskuraft.effortless.renderer.BlockShaders;
 import dev.huskuraft.effortless.renderer.opertaion.OperationsRenderer;
 import dev.huskuraft.effortless.renderer.outliner.OutlineRenderer;
 import dev.huskuraft.effortless.renderer.pattern.PatternRenderer;
 import dev.huskuraft.effortless.renderer.tooltip.TooltipRenderer;
 import dev.huskuraft.effortless.screen.clipboard.EffortlessClipboardScreen;
-import dev.huskuraft.effortless.screen.pattern.EffortlessPatternScreen;
+import dev.huskuraft.effortless.screen.pattern.procedural.EffortlessProceduralPatternScreen;
 import dev.huskuraft.effortless.screen.settings.EffortlessSettingsScreen;
 import dev.huskuraft.effortless.screen.structure.EffortlessStructureScreen;
 import dev.huskuraft.effortless.screen.test.EffortlessTestScreen;
@@ -48,6 +50,9 @@ public final class EffortlessClientManager implements ClientManager {
     private Client client;
 
     private int interactionCooldown = 0;
+    private java.util.UUID synchronizedPatternPlayer;
+    private dev.huskuraft.universal.api.core.ResourceLocation
+            synchronizedPatternDimension;
 
     public EffortlessClientManager(EffortlessClient entrance) {
         this.entrance = entrance;
@@ -188,15 +193,27 @@ public final class EffortlessClientManager implements ClientManager {
             getEntrance().getStructureBuilder().setClipboard(getRunningClient().getPlayer(), getEntrance().getStructureBuilder().getContext(getRunningClient().getPlayer()).clipboard().toggled());
             getEntrance().getClient().getPlayer().sendMessage(Effortless.getSystemMessage(Text.translate("effortless.message.building.server.toggle_clipboard", getEntrance().getStructureBuilder().getContext(getRunningClient().getPlayer()).clipboard().getNameText().withStyle(ChatFormatting.GOLD))));
         }
-        if (EffortlessKeys.TOGGLE_PATTERN.getKeyBinding().consumeClick()) {
-            getEntrance().getClient().getSoundManager().playButtonClickSound();
-            getEntrance().getStructureBuilder().setPattern(getRunningClient().getPlayer(), getEntrance().getStructureBuilder().getContext(getRunningClient().getPlayer()).pattern().toggled());
-            getEntrance().getClient().getPlayer().sendMessage(Effortless.getSystemMessage(Text.translate("effortless.message.building.server.toggle_pattern", getEntrance().getStructureBuilder().getContext(getRunningClient().getPlayer()).pattern().getNameText().withStyle(ChatFormatting.GOLD))));
+        boolean togglePattern =
+                EffortlessKeys.TOGGLE_PATTERN.getKeyBinding().consumeClick();
+        // Keep the earlier development key as a compatibility alias so users
+        // do not lose an existing custom binding.
+        togglePattern |= EffortlessKeys.TOGGLE_PROCEDURAL_PATTERN
+                .getKeyBinding().consumeClick();
+        if (togglePattern) {
+            togglePatternLibrary();
         }
         if (EffortlessKeys.TOGGLE_REPLACE.getKeyBinding().consumeClick()) {
             getEntrance().getClient().getSoundManager().playButtonClickSound();
             getEntrance().getStructureBuilder().setReplace(getRunningClient().getPlayer(), getEntrance().getStructureBuilder().getContext(getRunningClient().getPlayer()).replace().next());
             getEntrance().getClient().getPlayer().sendMessage(Effortless.getSystemMessage(Text.translate("effortless.message.building.server.toggle_replace", getEntrance().getStructureBuilder().getContext(getRunningClient().getPlayer()).replace().getNameText().withStyle(ChatFormatting.GOLD))));
+        }
+        if (EffortlessKeys.NEXT_PROCEDURAL_PRESET
+                .getKeyBinding().consumeClick()) {
+            cycleProceduralPreset(1);
+        }
+        if (EffortlessKeys.PREVIOUS_PROCEDURAL_PRESET
+                .getKeyBinding().consumeClick()) {
+            cycleProceduralPreset(-1);
         }
 
         if (EffortlessKeys.ROTATE_X.getKeyBinding().consumeClick()) {
@@ -302,7 +319,7 @@ public final class EffortlessClientManager implements ClientManager {
 
         if (EffortlessKeys.EDIT_PATTERN.getKeyBinding().consumeClick()) {
             getEntrance().getClient().getSoundManager().playButtonClickSound();
-            new EffortlessPatternScreen(getEntrance()).attach();
+            new EffortlessProceduralPatternScreen(getEntrance()).attach();
         }
 
 //        if (EffortlessKeys.EDIT_REPLACE.getKeyBinding().consumeClick()) {
@@ -315,6 +332,49 @@ public final class EffortlessClientManager implements ClientManager {
                 new EffortlessTestScreen(getEntrance()).attach();
             }
         }
+    }
+
+    private void cycleProceduralPreset(int direction) {
+        getEntrance().getClient().getSoundManager().playButtonClickSound();
+        var storage = getEntrance().getProceduralConfigStorage();
+        var library = storage.get().cycleActivePreset(direction);
+        storage.set(library);
+        applyPatternRecipe(library);
+        var name = library.activePreset()
+                .map(preset -> preset.name())
+                .orElse("none");
+        getPlayer().sendMessage(Effortless.getSystemMessage(
+                Text.text("Active pattern: ")
+                        .append(Text.text(name).withStyle(ChatFormatting.GOLD))
+        ));
+    }
+
+    public void togglePatternLibrary() {
+        getEntrance().getClient().getSoundManager().playButtonClickSound();
+        var storage = getEntrance().getProceduralConfigStorage();
+        var library = storage.get().withEnabled(!storage.get().enabled());
+        storage.set(library);
+        applyPatternRecipe(library);
+        getPlayer().sendMessage(Effortless.getSystemMessage(
+                Text.text(
+                        "Patterns: "
+                                + (library.enabled() ? "enabled" : "disabled")
+                ).withStyle(
+                        library.enabled()
+                                ? ChatFormatting.GREEN
+                                : ChatFormatting.RED
+                )
+        ));
+    }
+
+    public boolean applyPatternRecipe(ProceduralPatternLibrary library) {
+        var transforms = library.activePreset()
+                .map(preset -> preset.stockTransformers())
+                .orElse(java.util.List.of());
+        return getEntrance().getStructureBuilder().setPattern(
+                getPlayer(),
+                new Pattern(library.enabled(), transforms)
+        );
     }
 
     public EventResult onInteractionInput(InteractionType type, InteractionHand hand) {
@@ -350,6 +410,7 @@ public final class EffortlessClientManager implements ClientManager {
     public void onClientTick(Client client, ClientTick.Phase phase) {
         switch (phase) {
             case START -> {
+                synchronizeSavedPattern();
                 tickCooldown();
 
                 tooltipRenderer.tick();
@@ -360,6 +421,47 @@ public final class EffortlessClientManager implements ClientManager {
             }
             case END -> {
             }
+        }
+    }
+
+    private void synchronizeSavedPattern() {
+        if (getRunningClient() == null
+                || getRunningClient().getPlayer() == null) {
+            synchronizedPatternPlayer = null;
+            synchronizedPatternDimension = null;
+            return;
+        }
+        var player = getPlayer();
+        var dimension = player.getWorld().getDimensionId().location();
+        if (player.getId().equals(synchronizedPatternPlayer)
+                && dimension.equals(synchronizedPatternDimension)) {
+            return;
+        }
+        var storage = getEntrance().getProceduralConfigStorage();
+        var library = storage.get();
+        var stock = getEntrance().getStructureBuilder()
+                .getContext(player)
+                .pattern();
+        if (library.equals(ProceduralPatternLibrary.DEFAULT)
+                && !stock.transformers().isEmpty()) {
+            var imported = ProceduralPatternLibrary.DEFAULT
+                    .activePreset()
+                    .orElseThrow()
+                    .withImportedStockPattern(stock)
+                    .withName("Imported stock pattern");
+            library = new ProceduralPatternLibrary(
+                    stock.enabled(),
+                    imported.id(),
+                    java.util.List.of(imported)
+            );
+            storage.set(library);
+            Effortless.LOGGER.info(
+                    "Migrated the active stock pattern into Pattern Workbench"
+            );
+        }
+        if (applyPatternRecipe(library)) {
+            synchronizedPatternPlayer = player.getId();
+            synchronizedPatternDimension = dimension;
         }
     }
 
@@ -379,6 +481,7 @@ public final class EffortlessClientManager implements ClientManager {
 
     public void onRegisterShader(RegisterShader.ShadersSink sink) {
         BlockShaders.TINTED_OUTLINE.register(sink);
+        BlockShaders.FIXED_PREVIEW.register(sink);
         for (var value : Shaders.values()) {
             value.register(sink);
         }

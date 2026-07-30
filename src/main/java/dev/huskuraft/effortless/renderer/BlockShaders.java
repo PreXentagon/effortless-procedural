@@ -7,5 +7,9 @@ import dev.huskuraft.universal.api.renderer.VertexFormats;
 public interface BlockShaders {
 
     Shader TINTED_OUTLINE = Shader.lazy(ResourceLocation.vanilla("rendertype_tinted_solid"), VertexFormats.BLOCK);
+    Shader FIXED_PREVIEW = Shader.lazy(
+            ResourceLocation.vanilla("rendertype_effortless_preview"),
+            VertexFormats.BLOCK
+    );
 
 }

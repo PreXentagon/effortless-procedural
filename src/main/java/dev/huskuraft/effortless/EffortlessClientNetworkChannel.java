@@ -122,7 +122,11 @@ public final class EffortlessClientNetworkChannel extends NetworkChannel<AllPack
 
         @Override
         public void handle(PlayerSnapshotCapturePacket packet, Player player) {
-            getEntrance().getConfigStorage().update(config -> new ClientConfig(config.renderConfig(), config.patternConfig(), config.clipboardConfig().appendHistory(packet.snapshot())));
+            getEntrance().getConfigStorage().update(
+                    config -> config.withClipboardConfig(
+                            config.clipboardConfig().appendHistory(packet.snapshot())
+                    )
+            );
             getEntrance().getClient().execute(() -> getEntrance().getStructureBuilder().onSnapshotCaptured(player, packet.snapshot()));
         }
 
