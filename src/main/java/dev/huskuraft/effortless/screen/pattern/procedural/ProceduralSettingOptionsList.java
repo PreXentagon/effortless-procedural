@@ -396,15 +396,26 @@ final class ProceduralSettingOptionsList extends SettingOptionsList {
         } finally {
             restoreLabels.run();
         }
-        for (var entry : children()) {
-            if (!entry.isVisible()) {
-                continue;
+        // Nested +/- controls are intentionally redrawn after the stock list
+        // rows so their glyphs stay crisp. Keep that late pass inside the
+        // list viewport; otherwise scrolled-off controls float over headings
+        // and neighboring panels after the list's own scissor is removed.
+        renderer.pushScissor(getLeft(), y0, getWidth(), y1 - y0);
+        try {
+            for (var entry : children()) {
+                if (!entry.isVisible()
+                        || entry.getBottom() <= y0
+                        || entry.getTop() >= y1) {
+                    continue;
+                }
+                ProceduralTheme.renderNestedButtons(
+                        renderer,
+                        getTypeface(),
+                        entry.children()
+                );
             }
-            ProceduralTheme.renderNestedButtons(
-                    renderer,
-                    getTypeface(),
-                    entry.children()
-            );
+        } finally {
+            renderer.popScissor();
         }
         renderWorkbenchScrollbar(renderer);
     }

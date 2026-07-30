@@ -2,6 +2,7 @@ package dev.huskuraft.effortless.screen.pattern.procedural;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -31,6 +32,9 @@ import dev.huskuraft.effortless.building.pattern.array.ArrayTransformer;
 import dev.huskuraft.effortless.building.pattern.mirror.MirrorTransformer;
 import dev.huskuraft.effortless.building.pattern.raidal.RadialTransformer;
 import dev.huskuraft.effortless.building.structure.BuildMode;
+import dev.huskuraft.effortless.building.structure.BuildFeature;
+import dev.huskuraft.effortless.building.structure.BuildFeatures;
+import dev.huskuraft.effortless.building.structure.builder.Structure;
 import dev.huskuraft.effortless.screen.common.EffortlessScreen;
 import dev.huskuraft.effortless.screen.item.EffortlessItemPickerScreen;
 import dev.huskuraft.universal.api.core.BlockItem;
@@ -67,8 +71,14 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
             new ProceduralTooltipDelay();
     private InspectorTab inspectorTab = InspectorTab.MATERIALS;
     private CompactView compactView = CompactView.PALETTE;
-    private ProceduralPreviewWidget.View previewView =
-            ProceduralPreviewWidget.View.WALL;
+    private BuildMode previewMode = BuildMode.WALL;
+    private PreviewOrientation previewOrientation =
+            PreviewOrientation.defaultFor(previewMode);
+    private boolean previewSubtypesExpanded;
+    private final EnumMap<
+            BuildMode,
+            EnumMap<BuildFeatures, BuildFeature>
+    > previewFeatureOverrides = new EnumMap<>(BuildMode.class);
     private String presetSearch = "";
     private int selectedBlockIndex;
     private int selectedTransformerIndex;
@@ -98,6 +108,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
     private ReliableEditBox seedField;
     private ReliableEditBox noiseSaltField;
     private SpatialFieldEditorWidget gradientFieldEditor;
+    private ProceduralPreviewWidget previewWidget;
     private boolean discardArmed;
     private boolean allowDetach;
 
@@ -139,6 +150,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
         seedField = null;
         noiseSaltField = null;
         gradientFieldEditor = null;
+        previewWidget = null;
         layout();
         addHeader();
         addPresetPane();
@@ -257,6 +269,11 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
             gradientFieldEditor.beginEdit(mouseX, mouseY);
             return true;
         }
+        if (previewWidget != null
+                && previewWidget.containsInteractionPoint(mouseX, mouseY)
+                && previewWidget.onMouseClicked(mouseX, mouseY, button)) {
+            return true;
+        }
         UUID before = session.selectedPresetId();
         boolean consumed = super.onMouseClicked(mouseX, mouseY, button);
         if (presetList != null && presetList.hasSelected()) {
@@ -297,6 +314,15 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                     deltaY
             );
         }
+        if (previewWidget != null && previewWidget.isCameraDragging()) {
+            return previewWidget.onMouseDragged(
+                    mouseX,
+                    mouseY,
+                    button,
+                    deltaX,
+                    deltaY
+            );
+        }
         return super.onMouseDragged(
                 mouseX,
                 mouseY,
@@ -316,7 +342,29 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                     button
             );
         }
+        if (previewWidget != null && previewWidget.isCameraDragging()) {
+            return previewWidget.onMouseReleased(mouseX, mouseY, button);
+        }
         return super.onMouseReleased(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean onMouseScrolled(
+            double mouseX,
+            double mouseY,
+            double amountX,
+            double amountY
+    ) {
+        if (previewWidget != null
+                && previewWidget.onMouseScrolled(
+                        mouseX,
+                        mouseY,
+                        amountX,
+                        amountY
+                )) {
+            return true;
+        }
+        return super.onMouseScrolled(mouseX, mouseY, amountX, amountY);
     }
 
     @Override
@@ -855,34 +903,18 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
             int innerWidth,
             int availableHeight
     ) {
-        int viewWidth = Math.max(20, (innerWidth - GAP * 2) / 3);
-        addPreviewViewButton(
-                innerX,
-                y,
-                viewWidth,
-                ProceduralPreviewWidget.View.WALL
-        );
-        addPreviewViewButton(
-                innerX + viewWidth + GAP,
-                y,
-                viewWidth,
-                ProceduralPreviewWidget.View.FLOOR
-        );
-        addPreviewViewButton(
-                innerX + (viewWidth + GAP) * 2,
-                y,
-                innerWidth - (viewWidth + GAP) * 2,
-                ProceduralPreviewWidget.View.CUBE
-        );
-        y += BUTTON_HEIGHT + GAP;
-        addWidget(new ProceduralPreviewWidget(
+        int selectorHeight = addPreviewToolbar(innerX, y, innerWidth);
+        y += selectorHeight + GAP;
+        previewWidget = addWidget(new ProceduralPreviewWidget(
                 getEntrance(),
                 innerX,
                 y,
                 innerWidth,
-                Math.max(48, availableHeight - BUTTON_HEIGHT - GAP),
+                Math.max(48, availableHeight - selectorHeight - GAP),
                 () -> session.selectedPreset(),
-                () -> previewView
+                () -> previewMode,
+                () -> previewOrientation,
+                this::previewStructure
         ));
     }
 
@@ -950,26 +982,8 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
         );
         y += BUTTON_HEIGHT + GAP;
 
-        int viewWidth = Math.max(24, (innerWidth - GAP * 2) / 3);
-        addPreviewViewButton(
-                innerX,
-                y,
-                viewWidth,
-                ProceduralPreviewWidget.View.WALL
-        );
-        addPreviewViewButton(
-                innerX + viewWidth + GAP,
-                y,
-                viewWidth,
-                ProceduralPreviewWidget.View.FLOOR
-        );
-        addPreviewViewButton(
-                innerX + (viewWidth + GAP) * 2,
-                y,
-                innerWidth - (viewWidth + GAP) * 2,
-                ProceduralPreviewWidget.View.CUBE
-        );
-        y += BUTTON_HEIGHT + GAP;
+        int selectorHeight = addPreviewToolbar(innerX, y, innerWidth);
+        y += selectorHeight + GAP;
 
         int paletteHeight = clamp(contentHeight / 7, 62, 82);
         int remainingControls = paletteHeight + GAP + BUTTON_HEIGHT + GAP
@@ -978,14 +992,16 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 72,
                 contentTop + contentHeight - GAP - y - remainingControls
         );
-        addWidget(new ProceduralPreviewWidget(
+        previewWidget = addWidget(new ProceduralPreviewWidget(
                 getEntrance(),
                 innerX,
                 y,
                 innerWidth,
                 previewHeight,
                 () -> session.selectedPreset(),
-                () -> previewView
+                () -> previewMode,
+                () -> previewOrientation,
+                this::previewStructure
         ));
         y += previewHeight + GAP;
 
@@ -1072,36 +1088,63 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
         );
     }
 
-    private void addPreviewViewButton(
-            int x,
-            int y,
-            int width,
-            ProceduralPreviewWidget.View view
-    ) {
-        addButton(
+    private int addPreviewToolbar(int x, int y, int width) {
+        int height = ProceduralPreviewModeSelector.heightFor(
+                previewSubtypesExpanded
+        );
+        addWidget(new ProceduralPreviewModeSelector(
+                getEntrance(),
                 x,
                 y,
                 width,
-                Text.text(previewView == view
-                        ? "[" + previewLabel(view) + "]"
-                        : previewLabel(view)).withStyle(
-                        previewView == view
-                                ? ChatFormatting.GOLD
-                                : ChatFormatting.WHITE
-                ),
-                button -> {
-                    previewView = view;
+                () -> previewMode,
+                value -> {
+                    if (previewMode == value) {
+                        previewSubtypesExpanded = !previewSubtypesExpanded;
+                        recreate();
+                        return;
+                    }
+                    previewMode = value;
+                    previewOrientation = PreviewOrientation.defaultFor(value);
+                    previewSubtypesExpanded = true;
                     recreate();
-                }
-        );
+                },
+                () -> previewOrientation,
+                value -> {
+                    previewOrientation = value;
+                    recreate();
+                },
+                this::previewStructure,
+                this::setPreviewFeature,
+                () -> previewSubtypesExpanded
+        ));
+        return height;
     }
 
-    private static String previewLabel(ProceduralPreviewWidget.View view) {
-        return switch (view) {
-            case WALL -> "Wall";
-            case FLOOR -> "Floor";
-            case CUBE -> "Cube";
-        };
+    private Structure previewStructure() {
+        var configured = getEntrance().getConfigStorage()
+                .getStructure(previewMode);
+        var result = configured == null
+                ? previewMode.getDefaultStructure()
+                : configured;
+        var overrides = previewFeatureOverrides.get(previewMode);
+        if (overrides != null) {
+            for (var type : BuildFeatures.values()) {
+                var feature = overrides.get(type);
+                if (feature != null) {
+                    result = result.withFeature(feature);
+                }
+            }
+        }
+        return result;
+    }
+
+    private void setPreviewFeature(BuildFeature feature) {
+        previewFeatureOverrides.computeIfAbsent(
+                previewMode,
+                ignored -> new EnumMap<>(BuildFeatures.class)
+        ).put(feature.getType(), feature);
+        recreate();
     }
 
     private void addBlockTuningSliders(int innerX, int y, int innerWidth) {

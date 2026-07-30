@@ -481,6 +481,7 @@ public final class EffortlessClientManager implements ClientManager {
 
     public void onRegisterShader(RegisterShader.ShadersSink sink) {
         BlockShaders.TINTED_OUTLINE.register(sink);
+        BlockShaders.FIXED_PREVIEW.register(sink);
         for (var value : Shaders.values()) {
             value.register(sink);
         }

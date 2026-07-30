@@ -115,7 +115,7 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
-    [
+    def universalTargets = [
         '1.17.1': ['fabric-api', 'quilt-api', 'forge-api',],
         '1.18.1': ['fabric-api', 'quilt-api', 'forge-api',],
         '1.18.2': ['fabric-api', 'quilt-api', 'forge-api',],
@@ -128,10 +128,26 @@ dependencies {
         '1.20.6': ['fabric-api', 'quilt-api', 'forge-api', 'neoforge-api'],
         '1.21.1': ['fabric-api', 'quilt-api', 'forge-api', 'neoforge-api'],
         '1.21.3': ['fabric-api', 'quilt-api', 'forge-api', 'neoforge-api'],
-    ].forEach { minecraft, loaders ->
+    ]
+    def requestedTarget = providers.gradleProperty('effortlessTarget').orNull
+    def selectedTargetCount = 0
+    universalTargets.forEach { minecraft, loaders ->
         loaders.forEach { loader ->
-            universalTarget "dev.huskuraft.universal:${loader}:${minecraft}"
+            def loaderName = loader.endsWith('-api') ?
+                    loader.substring(0, loader.length() - '-api'.length()) :
+                    loader
+            def targetName = "${loaderName}:${minecraft}"
+            if (requestedTarget == null || requestedTarget == targetName) {
+                universalTarget "dev.huskuraft.universal:${loader}:${minecraft}"
+                selectedTargetCount++
+            }
         }
+    }
+    if (requestedTarget != null && selectedTargetCount == 0) {
+        throw new GradleException(
+                "Unknown effortlessTarget '${requestedTarget}'. " +
+                        "Expected a loader:version pair such as neoforge:1.21.1."
+        )
     }
 
 }
