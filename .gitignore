@@ -34,3 +34,11 @@ replay_*.log
 
 # Minecraft
 run/
+
+# Local development and generated artifacts
+tmp/
+output/
+.cache/
+*.tmp
+*.bak
+*.orig

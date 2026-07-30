@@ -1,5 +1,89 @@
+import dev.huskuraft.universal.gradle.task.modification.Modification
+import org.objectweb.asm.ClassReader
+import org.objectweb.asm.ClassVisitor
+import org.objectweb.asm.ClassWriter
+import org.objectweb.asm.MethodVisitor
+import org.objectweb.asm.Opcodes
+
+import java.util.jar.JarEntry
+
 plugins {
     id 'dev.huskuraft.universal' version '0.2.0'
+}
+
+/**
+ * The later migration to Universal API 0.1.0 brought in a NeoForge payload
+ * registrar pinned to Universal's protocol 0. The original Effortless 3.4.0
+ * NeoForge source registered the payload with Effortless.PROTOCOL_VERSION (13).
+ *
+ * Keep the current Universal API for its other fixes, but restore that single
+ * original registration instruction in the shaded Minecraft 1.21.1 adapter.
+ * The strict class/method/replacement count makes an upstream bytecode change a
+ * build failure instead of silently producing a server-incompatible JAR.
+ */
+class NeoForgeProtocolVersionModification implements Modification {
+
+    private static final String TARGET_CLASS =
+            'dev/huskuraft/effortless/neoforge/networking/NeoForgeNetworking.class'
+    private static final String TARGET_METHOD = 'lambda$register$1'
+
+    private final int protocolVersion
+
+    NeoForgeProtocolVersionModification(int protocolVersion) {
+        this.protocolVersion = protocolVersion
+    }
+
+    @Override
+    boolean appliesTo(JarEntry entry) {
+        return entry.name == TARGET_CLASS
+    }
+
+    @Override
+    byte[] apply(byte[] input) {
+        def reader = new ClassReader(input)
+        def writer = new ClassWriter(reader, 0)
+        int replacements = 0
+
+        def visitor = new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            MethodVisitor visitMethod(
+                    int access,
+                    String name,
+                    String descriptor,
+                    String signature,
+                    String[] exceptions
+            ) {
+                def delegate = super.visitMethod(access, name, descriptor, signature, exceptions)
+                if (name != TARGET_METHOD) {
+                    return delegate
+                }
+                return new MethodVisitor(Opcodes.ASM9, delegate) {
+                    @Override
+                    void visitInsn(int opcode) {
+                        if (opcode == Opcodes.ICONST_0) {
+                            super.visitIntInsn(Opcodes.BIPUSH, protocolVersion)
+                            replacements++
+                            return
+                        }
+                        super.visitInsn(opcode)
+                    }
+                }
+            }
+        }
+
+        reader.accept(visitor, 0)
+        if (replacements != 1) {
+            throw new IllegalStateException(
+                    "Expected one NeoForge protocol constant in ${TARGET_CLASS}, found ${replacements}."
+            )
+        }
+        return writer.toByteArray()
+    }
+
+    @Override
+    String toString() {
+        return "NeoForgeProtocolVersionModification(${protocolVersion})"
+    }
 }
 
 java {
@@ -10,13 +94,26 @@ java {
 dependencies {
     implementation 'com.google.code.findbugs:jsr305:3.0.2'
 
-    annotationProcessor 'com.google.auto.service:auto-service:1.1.1'
-    compileOnly 'com.google.auto.service:auto-service:1.1.1'
+    annotationProcessor('com.google.auto.service:auto-service:1.1.1') {
+        exclude group: 'com.google.errorprone',
+                module: 'error_prone_annotations'
+    }
+    compileOnly 'com.google.auto.service:auto-service-annotations:1.1.1'
+    compileOnly('com.google.guava:guava:32.1.2-jre') {
+        exclude group: 'com.google.errorprone',
+                module: 'error_prone_annotations'
+    }
 
-    compileOnly 'io.netty:netty-all:4.1.109.Final'
+    // NetByteBuf's public API only exposes ByteBuf. Depending on netty-all
+    // pulled every optional native/proxy transport onto the compile classpath.
+    compileOnly 'io.netty:netty-buffer:4.1.109.Final'
     compileOnly 'org.slf4j:slf4j-api:2.0.13'
 
     implementation 'dev.huskuraft.universal:common-api:0.1.0'
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
     [
         '1.17.1': ['fabric-api', 'quilt-api', 'forge-api',],
@@ -39,6 +136,51 @@ dependencies {
 
 }
 
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    // Fork javac so Windows does not keep dependency JAR zip file systems
+    // attached to Gradle's long-lived compiler process.
+    options.fork = true
+    if (System.getenv('JAVA_HOME')) {
+        def compiler = file("${System.getenv('JAVA_HOME')}/bin/javac")
+        if (!compiler.isFile()) {
+            compiler = file("${System.getenv('JAVA_HOME')}/bin/javac.exe")
+        }
+        if (compiler.isFile()) {
+            options.forkOptions.executable = compiler.absolutePath
+        }
+    }
+}
+
+// In the restricted Windows development environment used for this project,
+// command-line javac can open a class directory but cannot enumerate its class
+// files. Package the main output for the test compiler so test compilation sees
+// exactly the same bytecode without changing production artifacts.
+def mainClassesForTests = tasks.register('mainClassesForTests', Jar) {
+    dependsOn tasks.named('classes')
+    archiveClassifier = 'test-main-classes'
+    from sourceSets.main.output
+}
+
+tasks.named('compileTestJava', JavaCompile).configure {
+    dependsOn mainClassesForTests
+    // The command-line compiler cannot enumerate the previous test output
+    // directory in the same restricted Windows environment, so a partial
+    // incremental test compile could miss test-only support classes.
+    options.incremental = false
+    classpath = files(mainClassesForTests.flatMap { it.archiveFile }) +
+            configurations.testCompileClasspath
+}
+
 universal {
 
+}
+
+afterEvaluate {
+    tasks.named('transformJarTarget3955').configure {
+        modification(new NeoForgeProtocolVersionModification(13))
+    }
 }

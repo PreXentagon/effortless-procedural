@@ -24,7 +24,7 @@ import dev.huskuraft.effortless.building.settings.Misc;
 import dev.huskuraft.effortless.building.structure.BuildFeature;
 import dev.huskuraft.effortless.building.structure.builder.Structure;
 import dev.huskuraft.effortless.screen.clipboard.EffortlessClipboardScreen;
-import dev.huskuraft.effortless.screen.pattern.EffortlessPatternScreen;
+import dev.huskuraft.effortless.screen.pattern.procedural.EffortlessProceduralPatternScreen;
 import dev.huskuraft.effortless.screen.settings.EffortlessSettingsScreen;
 import dev.huskuraft.effortless.screen.wheel.AbstractWheelScreen;
 
@@ -36,14 +36,20 @@ public class EffortlessStructureScreen extends AbstractWheelScreen<Structure, Op
     private static final Button<Option> PATTERN_OPTION = lazyButton(() -> {
         var entrance = EffortlessClient.getInstance();
         var context = entrance.getStructureBuilder().getContext(entrance.getClient().getPlayer());
+        var library = entrance.getProceduralConfigStorage().get();
+        var active = library.activePreset();
         var descriptions = new ArrayList<Text>();
-        var name = context.pattern().getNameText();
-        if (context.pattern().enabled()) {
-//            name = context.pattern().getNameText().append(" " + context.pattern().transformers().size() + " Transformers");
-            if (!context.pattern().transformers().isEmpty()) {
+        var name = active
+                .map(preset -> Text.text(preset.name()))
+                .orElse(Text.text("Patterns"));
+        if (library.enabled()) {
+            var transformers = active
+                    .map(preset -> preset.stockTransformers())
+                    .orElse(java.util.List.of());
+            if (!transformers.isEmpty()) {
                 descriptions.add(Text.empty());
             }
-            for (var transformer : context.pattern().transformers()) {
+            for (var transformer : transformers) {
                 descriptions.add(Text.text("").append(transformer.getName().withStyle(ChatFormatting.GRAY)).append("").withStyle(ChatFormatting.GRAY));
                 for (var description : transformer.getDescriptions()) {
                     descriptions.add(Text.text(" ").append(description.withStyle(ChatFormatting.DARK_GRAY)));
@@ -53,7 +59,7 @@ public class EffortlessStructureScreen extends AbstractWheelScreen<Structure, Op
         descriptions.add(Text.empty());
         descriptions.add(Text.translate("effortless.tooltip.click_to_toggle_on_off", OptionKeys.KEY_ATTACK.getKeyBinding().getKey().getNameText()).withStyle(ChatFormatting.DARK_GRAY));
         descriptions.add(Text.translate("effortless.tooltip.click_to_edit_pattern", OptionKeys.KEY_USE.getKeyBinding().getKey().getNameText()).withStyle(ChatFormatting.DARK_GRAY));
-        return button(context.pattern(), context.pattern().enabled(), name, descriptions);
+        return button(context.pattern(), library.enabled(), name, descriptions);
     });
 
 //    private static final Button<Option> REPLACE_STRATEGY_DISABLED_OPTION = lazyButton(() -> {
@@ -172,7 +178,7 @@ public class EffortlessStructureScreen extends AbstractWheelScreen<Structure, Op
                     }
                     case PATTERN -> {
                         detach();
-                        new EffortlessPatternScreen(getEntrance()).attach();
+                        new EffortlessProceduralPatternScreen(getEntrance()).attach();
                     }
                     case GO_BACK -> {
                         setLeftButtons();
@@ -182,12 +188,12 @@ public class EffortlessStructureScreen extends AbstractWheelScreen<Structure, Op
             }
             if (entry.getContent() instanceof Pattern pattern) {
                 if (click) {
-                    getEntrance().getStructureBuilder().setPattern(getPlayer(), pattern.toggled());
+                    getEntrance().getClientManager().togglePatternLibrary();
                     return;
                 }
                 if (getEntrance().getStructureBuilder().checkPermission(getPlayer())) {
                     detach();
-                    new EffortlessPatternScreen(getEntrance()).attach();
+                    new EffortlessProceduralPatternScreen(getEntrance()).attach();
                 }
                 return;
             }

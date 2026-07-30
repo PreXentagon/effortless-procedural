@@ -15,6 +15,7 @@ public class EffortlessClient implements ClientEntrance {
     private final EffortlessClientManager clientManager = new EffortlessClientManager(this);
     private final EffortlessClientTagConfigStorage tagConfigStorage = new EffortlessClientTagConfigStorage(this);
     private final EffortlessClientConfigStorage configStorage = new EffortlessClientConfigStorage(this);
+    private final EffortlessProceduralConfigStorage proceduralConfigStorage = new EffortlessProceduralConfigStorage();
     private final EffortlessClientSessionManager sessionManager = new EffortlessClientSessionManager(this);
 
     public static EffortlessClient getInstance() {
@@ -45,6 +46,10 @@ public class EffortlessClient implements ClientEntrance {
 
     public EffortlessClientConfigStorage getConfigStorage() {
         return configStorage;
+    }
+
+    public EffortlessProceduralConfigStorage getProceduralConfigStorage() {
+        return proceduralConfigStorage;
     }
 
     public EffortlessClientSessionManager getSessionManager() {

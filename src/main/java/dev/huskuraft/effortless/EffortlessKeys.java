@@ -21,6 +21,21 @@ public enum EffortlessKeys implements KeyBindingOwner {
     EDIT_CLIPBOARD("edit_clipboard", Category.DEFAULT, KeyCodes.KEY_UNKNOWN),
     EDIT_PATTERN("edit_pattern", Category.DEFAULT, KeyCodes.KEY_UNKNOWN),
 //    EDIT_REPLACE("edit_replace", Category.DEFAULT, KeyCodes.KEY_UNKNOWN),
+    TOGGLE_PROCEDURAL_PATTERN(
+            "toggle_procedural_pattern",
+            Category.DEFAULT,
+            KeyCodes.KEY_UNKNOWN
+    ),
+    NEXT_PROCEDURAL_PRESET(
+            "next_procedural_preset",
+            Category.DEFAULT,
+            KeyCodes.KEY_UNKNOWN
+    ),
+    PREVIOUS_PROCEDURAL_PRESET(
+            "previous_procedural_preset",
+            Category.DEFAULT,
+            KeyCodes.KEY_UNKNOWN
+    ),
 
     // clipboard
     MOVE_LEFT("move_left", Category.CLIPBOARD, KeyCodes.KEY_LEFT),

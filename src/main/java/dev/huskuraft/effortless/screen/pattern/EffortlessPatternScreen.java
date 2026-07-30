@@ -7,6 +7,7 @@ import dev.huskuraft.universal.api.gui.AbstractPanelScreen;
 import dev.huskuraft.universal.api.gui.button.Button;
 import dev.huskuraft.universal.api.gui.text.MessageTextWidget;
 import dev.huskuraft.universal.api.gui.text.TextWidget;
+import dev.huskuraft.universal.api.gui.tooltip.TooltipHelper;
 import dev.huskuraft.universal.api.platform.Entrance;
 import dev.huskuraft.universal.api.text.ChatFormatting;
 import dev.huskuraft.universal.api.text.Text;
@@ -19,6 +20,7 @@ import dev.huskuraft.effortless.screen.transformer.EffortlessItemRandomizerEditS
 import dev.huskuraft.effortless.screen.transformer.EffortlessTransformerEditScreen;
 import dev.huskuraft.effortless.screen.transformer.EffortlessTransformerPresetsSelectScreen;
 import dev.huskuraft.effortless.screen.transformer.TransformerList;
+import dev.huskuraft.effortless.screen.pattern.procedural.EffortlessProceduralPatternScreen;
 
 public class EffortlessPatternScreen extends AbstractPanelScreen {
 
@@ -34,6 +36,7 @@ public class EffortlessPatternScreen extends AbstractPanelScreen {
     private Button clearButton;
     private Button addButton;
     private Button enableButton;
+    private Button proceduralButton;
     private Button doneButton;
 
     public EffortlessPatternScreen(Entrance entrance) {
@@ -59,7 +62,21 @@ public class EffortlessPatternScreen extends AbstractPanelScreen {
         this.enableButton = addWidget(Button.builder(getEntrance(), pattern.enabled() ? Text.translate("effortless.pattern.button.disable") : Text.translate("effortless.pattern.button.enable"), button -> {
             this.pattern = pattern.withEnabled(!pattern.enabled());
             recreate();
-        }).setBoundsGrid(getLeft(), getTop(), getWidth(), PANEL_TITLE_HEIGHT_1 + PANEL_BUTTON_ROW_HEIGHT_1, 0f, 0f, 1f).build());
+        }).setBoundsGrid(getLeft(), getTop(), getWidth(), PANEL_TITLE_HEIGHT_1 + PANEL_BUTTON_ROW_HEIGHT_1, 0f, 0f, 0.5f).build());
+
+        this.proceduralButton = addWidget(Button.builder(
+                getEntrance(),
+                Text.text("Procedural…"),
+                button -> new EffortlessProceduralPatternScreen(getEntrance()).attach()
+        ).setBoundsGrid(
+                getLeft(),
+                getTop(),
+                getWidth(),
+                PANEL_TITLE_HEIGHT_1 + PANEL_BUTTON_ROW_HEIGHT_1,
+                0f,
+                0.5f,
+                0.5f
+        ).build());
 
         this.doneButton = addWidget(Button.builder(getEntrance(), Text.translate("effortless.button.done"), button -> {
             detachAll();
@@ -127,7 +144,6 @@ public class EffortlessPatternScreen extends AbstractPanelScreen {
         this.downButton.setActive(entries.hasSelected() && entries.indexOfSelected() < entries.children().size() - 1);
         this.editButton.setActive(entries.hasSelected());
         this.deleteButton.setActive(entries.hasSelected());
-        this.addButton.setActive(entries.items().size() < 4);
 
         this.upButton.setVisible(getEntrance().getClient().getWindow().isAltDown() && pattern.enabled());
         this.downButton.setVisible(getEntrance().getClient().getWindow().isAltDown() && pattern.enabled());
@@ -137,6 +153,15 @@ public class EffortlessPatternScreen extends AbstractPanelScreen {
         this.addButton.setVisible(pattern.enabled());
 
         this.textWidget.setVisible(this.entries.isVisible() && this.entries.items().isEmpty());
+        this.proceduralButton.setTooltip(TooltipHelper.makeSummary(
+                getTypeface(),
+                Text.text("Procedural patterns"),
+                Text.text(
+                        "Open the client-only procedural preset library. "
+                                + "Presets compile to the original server's "
+                                + "existing randomizer format."
+                )
+        ));
 
         if (entries.consumeDoubleClick() && entries.hasSelected()) {
             editTransformer(entries.getSelected().getItem());

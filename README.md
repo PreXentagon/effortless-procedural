@@ -1,20 +1,26 @@
 ![Logo](assets/logo.png)
 
-# Effortless Structure
+# Effortless Procedural
 
-[Effortless Structure]() is a multiplatform mod for placing and breaking blocks in Minecraft. It offers a set of modes
-allowing players to create structures and designs with ease. Additionally, it includes an randomizer that randomly
-selects items
-from a pre-defined list for random placement.
+[Effortless Procedural](https://github.com/PreXentagon/effortless-procedural) is a community fork of
+[Effortless Structure](https://github.com/huskuraft/effortless). It retains the original multiplatform building tools
+while extending the client pattern system with named procedural recipes, gradients, seeded noise, layered masks,
+placement constraints, quotas, and deterministic generation.
+
+Procedural recipes are compiled on the client into placement data already supported by a compatible, unchanged
+Effortless Structure server. No procedural rule type or fork-specific packet is required on the server. Current
+development and validation focus on Minecraft 1.21.1 with NeoForge.
 
 <div style="text-align: center">
-    <a href="https://modrinth.com/mod/effortless">Modrinth</a>
+    <a href="https://modrinth.com/mod/effortless">Upstream Modrinth</a>
     <span> | </span>
-    <a href="https://www.curseforge.com/minecraft/mc-mods/effortless">CurseForge</a>
+    <a href="https://www.curseforge.com/minecraft/mc-mods/effortless">Upstream CurseForge</a>
     <span> | </span>
-    <a href="https://github.com/huskuraft/effortless">GitHub</a>
+    <a href="https://github.com/PreXentagon/effortless-procedural">Fork GitHub</a>
     <span> | </span>
-    <a href="https://github.com/huskuraft/effortless/wiki">Documentation</a>
+    <a href="https://github.com/huskuraft/effortless">Upstream GitHub</a>
+    <span> | </span>
+    <a href="https://github.com/huskuraft/effortless/wiki">Upstream Documentation</a>
     <span> | </span>
     <a href="https://discord.gg/FwbBg8uUZ7">Discord</a>
 </div>
@@ -25,11 +31,17 @@ from a pre-defined list for random placement.
   items or making incompatible modifications.
 - Item Randomizer: This mod includes an item randomizer that lets players place blocks and entities randomly from a
   pre-defined list.
+- Pattern Workbench: Create named material palettes with weighted selection, ordered gradients, seeded noise, spatial
+  masks, adjacency and directional rules, spacing, quotas, cleanup, and deterministic seeds.
+- Server-Compatible Compilation: Client-only procedural recipes resolve into the original server-supported pattern
+  representation before placement.
 - Clipboard: This mod includes a clipboard that lets players copy and paste blocks and entities between worlds.
 
 ## Platforms
 
-- You need to install this mod on both the client side and server side.
+- The base Effortless mod must be installed on both the client and server.
+- A client running this fork can use its procedural workbench with a compatible unchanged original server because the
+  generated result is compiled into the existing protocol representation.
 - You can use this mod on servers with different platforms from your client.
 - You can use the same mod jar file on multiple targets.
 
@@ -149,10 +161,20 @@ from a pre-defined list for random placement.
 
 ## Credits
 
+* **[Huskuraft](https://github.com/huskuraft)** and all contributors to the
+  [original Effortless Structure project](https://github.com/huskuraft/effortless), which this fork is based on
 * **[Requioss](https://www.curseforge.com/members/requioss)**, the author
   of [Effortless Building](https://www.curseforge.com/minecraft/mc-mods/effortless-building)
 * **[loehnertj](https://github.com/loehnertj)**, for porting to 1.20.2
+* **[PreXentagon](https://github.com/PreXentagon)**, maintainer of the Effortless Procedural fork
+
+## Development and AI Assistance
+
+Development of this fork used AI-assisted software-development tooling, including OpenAI Codex, to accelerate
+codebase analysis, implementation, automated testing, debugging, UI iteration, and documentation under limited
+development time. AI-assisted changes remain subject to project review and testing; the fork maintainer retains
+responsibility for release decisions, code quality, security, attribution, and license compliance.
 
 ## License
 
-Effortless Structure is licensed under LGPLv3.
+Effortless Procedural remains licensed under LGPLv3, consistent with the upstream Effortless Structure project.

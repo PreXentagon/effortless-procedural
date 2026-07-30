@@ -1,5 +1,6 @@
 package dev.huskuraft.effortless.screen.settings;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -10,9 +11,9 @@ import dev.huskuraft.universal.api.gui.EntryList;
 import dev.huskuraft.universal.api.gui.button.Button;
 import dev.huskuraft.universal.api.gui.container.AbstractEntryList;
 import dev.huskuraft.universal.api.gui.container.EditableEntryList;
-import dev.huskuraft.universal.api.gui.input.NumberField;
 import dev.huskuraft.universal.api.gui.slot.TextSlot;
 import dev.huskuraft.universal.api.gui.text.TextWidget;
+import dev.huskuraft.universal.api.gui.tooltip.TooltipHelper;
 import dev.huskuraft.universal.api.platform.Entrance;
 import dev.huskuraft.universal.api.text.ChatFormatting;
 import dev.huskuraft.universal.api.text.Text;
@@ -57,7 +58,11 @@ public class SettingOptionsList extends AbstractEntryList<SettingOptionsList.Ent
     }
 
     public NumberEntry addNumberEntry(Text title, Text symbol, Double value, Double min, Double max, Consumer<Double> consumer) {
-        return addEntry(new NumberEntry(getEntrance(), this, title, symbol, value, min, max, consumer));
+        return addNumberEntry(title, symbol, value, min, max, 1.0, consumer);
+    }
+
+    public NumberEntry addNumberEntry(Text title, Text symbol, Double value, Double min, Double max, double step, Consumer<Double> consumer) {
+        return addEntry(new NumberEntry(getEntrance(), this, title, symbol, value, min, max, step, consumer));
     }
 
     public IntegerEntry addIntegerEntry(Text title, Text symbol, int value, int min, int max, Consumer<Integer> consumer) {
@@ -128,7 +133,7 @@ public class SettingOptionsList extends AbstractEntryList<SettingOptionsList.Ent
 
         private final Double min;
         private final Double max;
-        private NumberField numberField;
+        private BoundedNumberField numberField;
         private Button positionRoundButton;
 
         public PositionEntry(Entrance entrance, SettingOptionsList entryList, Text title, Text symbol, Double value, Double min, Double max, Consumer<Double> consumer) {
@@ -141,9 +146,10 @@ public class SettingOptionsList extends AbstractEntryList<SettingOptionsList.Ent
         public void onCreate() {
             super.onCreate();
 
-            this.numberField = addWidget(new NumberField(getEntrance(), getInnerRight() - 72 - 20, getTop(), 72, 20, NumberField.TYPE_DOUBLE));
-            this.numberField.setValueRange(min, max);
-            this.numberField.setValue(getItem());
+            this.numberField = addWidget(new BoundedNumberField(
+                    getEntrance(), getInnerRight() - 72 - 20, getTop(), 72, 20,
+                    BoundedNumberField.TYPE_DOUBLE, getItem(), min, max, 1.0
+            ));
             this.numberField.setValueChangeListener(value -> {
                 super.setItem(value.doubleValue());
             });
@@ -174,25 +180,32 @@ public class SettingOptionsList extends AbstractEntryList<SettingOptionsList.Ent
         }
     }
 
-    public static final class NumberEntry extends SettingsEntry<Double> {
+    public static class NumberEntry extends SettingsEntry<Double> {
 
-        private final Double min;
-        private final Double max;
-        private NumberField numberField;
+        protected final Double min;
+        protected final Double max;
+        protected final double step;
+        protected BoundedNumberField numberField;
 
         public NumberEntry(Entrance entrance, SettingOptionsList entryList, Text title, Text symbol, Double value, Double min, Double max, Consumer<Double> consumer) {
+            this(entrance, entryList, title, symbol, value, min, max, 1.0, consumer);
+        }
+
+        public NumberEntry(Entrance entrance, SettingOptionsList entryList, Text title, Text symbol, Double value, Double min, Double max, double step, Consumer<Double> consumer) {
             super(entrance, entryList, title, symbol, value, consumer);
             this.min = min;
             this.max = max;
+            this.step = step;
         }
 
         @Override
         public void onCreate() {
             super.onCreate();
 
-            this.numberField = addWidget(new NumberField(getEntrance(), getInnerRight() - 72, getTop(), 72, 20, NumberField.TYPE_DOUBLE));
-            this.numberField.setValueRange(min, max);
-            this.numberField.setValue(getItem());
+            this.numberField = addWidget(new BoundedNumberField(
+                    getEntrance(), getInnerRight() - 72, getTop(), 72, 20,
+                    BoundedNumberField.TYPE_DOUBLE, getItem(), min, max, step
+            ));
             this.numberField.setValueChangeListener(value -> {
                 super.setItem(value.doubleValue());
             });
@@ -207,12 +220,12 @@ public class SettingOptionsList extends AbstractEntryList<SettingOptionsList.Ent
         }
     }
 
-    public static final class IntegerEntry extends SettingsEntry<Integer> {
+    public static class IntegerEntry extends SettingsEntry<Integer> {
 
-        private final int min;
-        private final int max;
-        private final int step;
-        private NumberField numberField;
+        protected final int min;
+        protected final int max;
+        protected final int step;
+        protected BoundedNumberField numberField;
 
         public IntegerEntry(Entrance entrance, SettingOptionsList entryList, Text title, Text symbol, Integer value, int min, int max, Consumer<Integer> consumer) {
             this(entrance, entryList, title, symbol, value, min, max, 1, consumer);
@@ -229,13 +242,13 @@ public class SettingOptionsList extends AbstractEntryList<SettingOptionsList.Ent
         public void onCreate() {
             super.onCreate();
 
-            this.numberField = addWidget(new NumberField(getEntrance(), getInnerRight() - 72, getTop(), 72, 20, NumberField.TYPE_INTEGER));
-            this.numberField.setValueRange(min, max);
-            this.numberField.setValue(getItem());
+            this.numberField = addWidget(new BoundedNumberField(
+                    getEntrance(), getInnerRight() - 72, getTop(), 72, 20,
+                    BoundedNumberField.TYPE_INTEGER, getItem(), min, max, step
+            ));
             this.numberField.setValueChangeListener(value -> {
                 super.setItem(value.intValue());
             });
-            this.numberField.setStep(step);
             this.titleTextWidget.setWidth(getInnerRight() - getInnerLeft() - 8 - numberField.getWidth());
 
         }
@@ -247,12 +260,12 @@ public class SettingOptionsList extends AbstractEntryList<SettingOptionsList.Ent
         }
     }
 
-    public static final class SelectorEntry<T> extends SettingsEntry<T> {
+    public static class SelectorEntry<T> extends SettingsEntry<T> {
 
-        private final List<Text> messages;
-        private final List<T> values;
-        private Button button;
-        private T value;
+        protected final List<Text> messages;
+        protected final List<T> values;
+        protected List<Text> valueSummaries = List.of();
+        protected Button button;
 
         public SelectorEntry(Entrance entrance, SettingOptionsList entryList, Text title, Text symbol, List<Text> messages, List<T> values, T value, Consumer<T> consumer) {
             super(entrance, entryList, title, symbol, value, consumer);
@@ -273,15 +286,15 @@ public class SettingOptionsList extends AbstractEntryList<SettingOptionsList.Ent
 
         }
 
-        private int getIndex() {
+        protected int getIndex() {
             return getItem() == null ? -1 : values.indexOf(getItem());
         }
 
-        private T getNextItem() {
+        protected T getNextItem() {
             return values.get((getIndex() + 1) % values.size());
         }
 
-        private Text getButtonMessage() {
+        protected Text getButtonMessage() {
             var index = getIndex();
             if (index == -1 || index >= messages.size()) {
                 return Text.empty();
@@ -295,6 +308,64 @@ public class SettingOptionsList extends AbstractEntryList<SettingOptionsList.Ent
             this.button.setMessage(getButtonMessage());
         }
 
+        public SelectorEntry<T> setValueSummaries(List<Text> summaries) {
+            if (!summaries.isEmpty() && summaries.size() != values.size()) {
+                throw new IllegalArgumentException(
+                        "Selector value summaries must match selector values"
+                );
+            }
+            valueSummaries = List.copyOf(summaries);
+            return this;
+        }
+
+        @Override
+        public List<Text> getTooltip() {
+            if (valueSummaries.isEmpty()) {
+                return super.getTooltip();
+            }
+            var tooltips = new ArrayList<Text>();
+            tooltips.add(getMessage().withStyle(
+                    ChatFormatting.WHITE
+            ));
+            tooltips.add(getButtonMessage().withStyle(
+                    ChatFormatting.GOLD
+            ));
+            tooltips.add(Text.empty());
+            tooltips.add(TooltipHelper.holdShiftForSummary());
+            if (!TooltipHelper.isSummaryButtonDown()) {
+                return List.copyOf(tooltips);
+            }
+
+            if (!getSummary().getString().isEmpty()) {
+                tooltips.add(Text.empty());
+                tooltips.addAll(TooltipHelper.wrapLines(
+                        getTypeface(),
+                        getSummary().withStyle(ChatFormatting.GRAY)
+                ));
+            }
+            boolean compact = messages.size() > 8;
+            for (int index = 0; index < messages.size(); index++) {
+                if (!compact) {
+                    tooltips.add(Text.empty());
+                    tooltips.add(messages.get(index));
+                    tooltips.addAll(TooltipHelper.wrapLines(
+                            getTypeface(),
+                            valueSummaries.get(index)
+                                    .withStyle(ChatFormatting.GRAY)
+                    ));
+                    continue;
+                }
+                tooltips.addAll(TooltipHelper.wrapLines(
+                        getTypeface(),
+                        Text.text(
+                                messages.get(index).getString() + ": "
+                                        + valueSummaries.get(index).getString()
+                        )
+                ));
+            }
+            return List.copyOf(tooltips);
+        }
+
     }
 
     public abstract static class SettingsEntry<T> extends Entry<T> {
@@ -304,6 +375,7 @@ public class SettingOptionsList extends AbstractEntryList<SettingOptionsList.Ent
         protected Button altButton;
         private Text symbol;
         private Consumer<T> consumer;
+        private Text summary = Text.empty();
 
         protected SettingsEntry(Entrance entrance, SettingOptionsList entryList, Text title, Text symbol, T value, Consumer<T> consumer) {
             super(entrance, entryList, value);
@@ -371,6 +443,29 @@ public class SettingOptionsList extends AbstractEntryList<SettingOptionsList.Ent
 
         public void setConsumer(Consumer<T> consumer) {
             this.consumer = consumer;
+        }
+
+        public SettingsEntry<T> setSummary(Text summary) {
+            this.summary = summary == null ? Text.empty() : summary;
+            return this;
+        }
+
+        protected Text getSummary() {
+            return summary;
+        }
+
+        @Override
+        public List<Text> getTooltip() {
+            if (summary.getString().isEmpty()) {
+                return super.getTooltip();
+            }
+            return TooltipHelper.makeSummary(
+                    getTypeface(),
+                    getMessage().withStyle(
+                            ChatFormatting.WHITE
+                    ),
+                    summary
+            );
         }
 
         public AbstractWidget getTitleTextWidget() {

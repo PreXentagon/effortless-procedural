@@ -10,7 +10,6 @@ import dev.huskuraft.universal.api.gui.text.TextWidget;
 import dev.huskuraft.universal.api.platform.Entrance;
 import dev.huskuraft.universal.api.text.Text;
 import dev.huskuraft.effortless.building.config.RenderConfig;
-import dev.huskuraft.effortless.building.pattern.Pattern;
 import dev.huskuraft.effortless.screen.settings.SettingOptionsList;
 
 public class EffortlessRenderSettingsScreen extends AbstractPanelScreen {
@@ -24,7 +23,6 @@ public class EffortlessRenderSettingsScreen extends AbstractPanelScreen {
     public EffortlessRenderSettingsScreen(Entrance entrance) {
         super(entrance, Text.translate("effortless.render_settings.title"), PANEL_WIDTH_60, PANEL_HEIGHT_FULL);
         this.consumer = newConfig -> {
-            getEntrance().getStructureBuilder().setPattern(getEntrance().getClient().getPlayer(), Pattern.DISABLED);
             getEntrance().getConfigStorage().update(config -> config.withRenderConfig(newConfig));
         };
         this.config = getEntrance().getConfigStorage().get().renderConfig();
