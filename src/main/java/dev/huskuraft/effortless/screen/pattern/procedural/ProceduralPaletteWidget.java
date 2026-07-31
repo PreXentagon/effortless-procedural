@@ -8,6 +8,7 @@ import java.util.function.Supplier;
 import java.util.function.BiConsumer;
 
 import dev.huskuraft.effortless.client.pattern.procedural.GradientDistributionMode;
+import dev.huskuraft.effortless.client.pattern.procedural.ProceduralMaterial;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralBlockEntry;
 import dev.huskuraft.universal.api.core.Item;
 import dev.huskuraft.universal.api.core.ItemStack;
@@ -192,12 +193,29 @@ final class ProceduralPaletteWidget extends AbstractWidget {
                 );
             }
 
-            var stack = resolveItem(block.itemId()).getDefaultStack();
-            renderer.renderItem(
-                    stack,
-                    left + Math.max(1, (right - left - 18) / 2),
-                    cardY + 6
-            );
+            if (ProceduralMaterial.isSpecialId(block.itemId())) {
+                renderer.renderTextFromCenter(
+                        getTypeface(),
+                        Text.text(
+                                ProceduralMaterial.SKIP_ID.equals(
+                                        block.itemId()
+                                ) ? "∅" : "×"
+                        ),
+                        (left + right) / 2,
+                        cardY + 11,
+                        ProceduralMaterial.SKIP_ID.equals(block.itemId())
+                                ? 0xFF9AB8C2
+                                : 0xFFD98282,
+                        true
+                );
+            } else {
+                var stack = resolveItem(block.itemId()).getDefaultStack();
+                renderer.renderItem(
+                        stack,
+                        left + Math.max(1, (right - left - 18) / 2),
+                        cardY + 6
+                );
+            }
             String label = fitLabel(
                     shortId(block.itemId()),
                     Math.max(8, right - left - 6)
@@ -270,6 +288,27 @@ final class ProceduralPaletteWidget extends AbstractWidget {
             return List.of();
         }
         var entry = blocks.get(hoveredIndex);
+        if (ProceduralMaterial.isSpecialId(entry.itemId())) {
+            var tooltip = new ArrayList<Text>();
+            boolean skip = ProceduralMaterial.SKIP_ID.equals(entry.itemId());
+            tooltip.add(Text.text(skip ? "Skip" : "Eraser").withStyle(
+                    skip ? ChatFormatting.AQUA : ChatFormatting.RED
+            ));
+            tooltip.add(Text.text(
+                    skip
+                            ? "Leaves this generated position unchanged."
+                            : "Compiles this position to a stock air update."
+            ).withStyle(ChatFormatting.GRAY));
+            tooltip.add(Text.text(
+                    skip
+                            ? "No server operation is emitted."
+                            : "Server break permissions and tools still apply."
+            ).withStyle(ChatFormatting.DARK_GRAY));
+            tooltip.add(Text.empty());
+            tooltip.add(Text.text("Base weight " + entry.weight())
+                    .withStyle(ChatFormatting.GRAY));
+            return List.copyOf(tooltip);
+        }
         var stack = resolveItem(entry.itemId()).getDefaultStack();
         var tooltip = new ArrayList<>(stack.getTooltips(
                 getEntrance().getClient().getPlayer(),

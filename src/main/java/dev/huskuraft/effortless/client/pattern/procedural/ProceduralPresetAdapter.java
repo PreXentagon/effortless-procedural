@@ -9,9 +9,9 @@ import java.util.Optional;
 import java.util.Set;
 
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralPatternPreset;
+import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralMaskLayer;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralVerticalRule;
 import dev.huskuraft.universal.api.core.BlockItem;
-import dev.huskuraft.universal.api.core.Item;
 import dev.huskuraft.universal.api.core.ResourceLocation;
 
 public final class ProceduralPresetAdapter {
@@ -21,31 +21,43 @@ public final class ProceduralPresetAdapter {
 
     public static Adaptation adapt(ProceduralPatternPreset preset) {
         var errors = new ArrayList<String>();
-        var candidates = new ArrayList<Candidate<Item>>();
+        var candidates = new ArrayList<Candidate<ProceduralMaterial>>();
         var weighted = new LinkedHashMap<String, Double>();
         var gradient = new LinkedHashMap<String, LinearGradientSource.EndpointWeights>();
         var noise = new LinkedHashMap<String, SeededNoiseSource.MultiplierRange>();
         var gradientStops = new LinkedHashMap<String, Double>();
 
         for (var entry : preset.blocks()) {
-            Item item;
+            ProceduralMaterial material;
+            if (ProceduralMaterial.SKIP_ID.equals(entry.itemId())) {
+                material = ProceduralMaterial.skip();
+            } else if (ProceduralMaterial.ERASER_ID.equals(entry.itemId())) {
+                material = ProceduralMaterial.eraser();
+            } else {
             try {
                 var location = ResourceLocation.decompose(entry.itemId());
-                var resolved = Item.fromIdOptional(location);
+                var resolved =
+                        dev.huskuraft.universal.api.core.Item
+                                .fromIdOptional(location);
                 if (resolved.isEmpty()) {
                     errors.add("Unknown block item '" + entry.itemId() + "'");
                     continue;
                 }
-                item = resolved.get();
+                if (!(resolved.get() instanceof BlockItem blockItem)) {
+                    errors.add("'" + entry.itemId()
+                            + "' is not a placeable block item");
+                    continue;
+                }
+                material = ProceduralMaterial.block(
+                        entry.itemId(),
+                        blockItem
+                );
             } catch (RuntimeException exception) {
                 errors.add("Invalid block item id '" + entry.itemId() + "'");
                 continue;
             }
-            if (!(item instanceof BlockItem)) {
-                errors.add("'" + entry.itemId() + "' is not a placeable block item");
-                continue;
             }
-            candidates.add(new Candidate<>(entry.itemId(), item));
+            candidates.add(new Candidate<>(entry.itemId(), material));
             weighted.put(entry.itemId(), entry.weight());
             gradient.put(
                     entry.itemId(),
@@ -71,7 +83,7 @@ public final class ProceduralPresetAdapter {
             );
         }
 
-        var sources = new ArrayList<WeightSource<Item>>();
+        var sources = new ArrayList<WeightSource<ProceduralMaterial>>();
         sources.add(new WeightedSource<>(weighted));
         if (preset.sequenceEnabled()) {
             sources.add(new SequenceSource<>(
@@ -107,8 +119,24 @@ public final class ProceduralPresetAdapter {
                     preset.advanced().noiseConfig()
             ));
         }
+        var structuralMode = preset.advanced().structuralPlacementMode();
+        if (structuralMode == StructuralPlacementMode.SMART) {
+            sources.add(new StructuralPlacementWeightSource(structuralMode));
+        } else if (structuralMode == StructuralPlacementMode.RULE_DRIVEN
+                && preset.advanced().maskLayers().stream()
+                .filter(ProceduralMaskLayer::enabled)
+                .noneMatch(layer -> isStructuralCoordinate(
+                        layer.coordinate()
+                ))) {
+            errors.add(
+                    "Rule-driven structural placement requires an enabled "
+                            + "Path, Depth, Thickness, Slope, Tip, or "
+                            + "Junction mask"
+            );
+        }
 
-        var constraints = new ArrayList<PlacementConstraint<Item>>();
+        var constraints =
+                new ArrayList<PlacementConstraint<ProceduralMaterial>>();
         var scope = preset.inspectExistingWorld()
                 ? NeighborScope.GENERATED_AND_EXISTING
                 : NeighborScope.GENERATED_ONLY;
@@ -207,7 +235,7 @@ public final class ProceduralPresetAdapter {
             ));
         }
         for (var quotaConfig : preset.advanced().quotaRules()) {
-            var quota = new CandidateQuotaRule<Item>(
+            var quota = new CandidateQuotaRule<ProceduralMaterial>(
                     quotaConfig.itemId(),
                     quotaConfig.minimum(),
                     quotaConfig.maximum(),
@@ -216,7 +244,8 @@ public final class ProceduralPresetAdapter {
             sources.add(quota);
             constraints.add(quota);
         }
-        var cleanupRules = new ArrayList<PostGenerationRule<Item>>();
+        var cleanupRules =
+                new ArrayList<PostGenerationRule<ProceduralMaterial>>();
         for (var cleanup : preset.advanced().cleanupRules()) {
             cleanupRules.add(new NeighborhoodReplacementRule<>(
                     Set.copyOf(cleanup.sourceItemIds()),
@@ -244,6 +273,13 @@ public final class ProceduralPresetAdapter {
             return Adaptation.failure(errors);
         }
         return Adaptation.success(ruleSet);
+    }
+
+    private static boolean isStructuralCoordinate(Coordinate coordinate) {
+        return switch (coordinate) {
+            case PATH, DEPTH, THICKNESS, SLOPE, TIP, JUNCTION -> true;
+            case X, Y, Z, DISTANCE, TRAVERSAL, LATERAL -> false;
+        };
     }
 
     private static void validateExistingWorldReferences(
@@ -275,7 +311,9 @@ public final class ProceduralPresetAdapter {
 
         for (var reference : references) {
             try {
-                if (Item.fromIdOptional(ResourceLocation.decompose(reference))
+                if (dev.huskuraft.universal.api.core.Item.fromIdOptional(
+                        ResourceLocation.decompose(reference)
+                )
                         .isEmpty()) {
                     errors.add(
                             "Unknown existing-world block item '"
@@ -292,7 +330,7 @@ public final class ProceduralPresetAdapter {
     }
 
     public record Adaptation(
-            Optional<ProceduralRuleSet<Item>> ruleSet,
+            Optional<ProceduralRuleSet<ProceduralMaterial>> ruleSet,
             List<String> errors
     ) {
 
@@ -300,7 +338,9 @@ public final class ProceduralPresetAdapter {
             errors = List.copyOf(errors);
         }
 
-        public static Adaptation success(ProceduralRuleSet<Item> ruleSet) {
+        public static Adaptation success(
+                ProceduralRuleSet<ProceduralMaterial> ruleSet
+        ) {
             return new Adaptation(Optional.of(ruleSet), List.of());
         }
 

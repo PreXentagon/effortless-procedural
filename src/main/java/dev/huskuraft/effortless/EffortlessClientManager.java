@@ -25,6 +25,10 @@ import dev.huskuraft.universal.api.text.Text;
 import dev.huskuraft.effortless.building.clipboard.SnapshotTransform;
 import dev.huskuraft.effortless.building.pattern.Pattern;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralPatternLibrary;
+import dev.huskuraft.effortless.client.road.RoadEditor;
+import dev.huskuraft.effortless.client.road.SplineSubtype;
+import dev.huskuraft.effortless.client.tree.TreeEditor;
+import dev.huskuraft.effortless.client.tree.TreeArchetype;
 import dev.huskuraft.effortless.renderer.BlockShaders;
 import dev.huskuraft.effortless.renderer.opertaion.OperationsRenderer;
 import dev.huskuraft.effortless.renderer.outliner.OutlineRenderer;
@@ -46,6 +50,8 @@ public final class EffortlessClientManager implements ClientManager {
     private final OperationsRenderer operationsRenderer;
     private final OutlineRenderer outlineRenderer;
     private final PatternRenderer patternRenderer;
+    private final RoadEditor roadEditor;
+    private final TreeEditor treeEditor;
 
     private Client client;
 
@@ -61,6 +67,8 @@ public final class EffortlessClientManager implements ClientManager {
         this.operationsRenderer = new OperationsRenderer(entrance);
         this.outlineRenderer = new OutlineRenderer();
         this.patternRenderer = new PatternRenderer(entrance);
+        this.roadEditor = new RoadEditor(entrance);
+        this.treeEditor = new TreeEditor(entrance);
 
         getEntrance().getEventRegistry().getRegisterKeysEvent().register(this::onRegisterKeys);
         getEntrance().getEventRegistry().getKeyInputEvent().register(this::onKeyInput);
@@ -103,6 +111,34 @@ public final class EffortlessClientManager implements ClientManager {
 
     public PatternRenderer getPatternRenderer() {
         return patternRenderer;
+    }
+
+    public RoadEditor getRoadEditor() {
+        return roadEditor;
+    }
+
+    public boolean startRoadEditorFromActivePattern() {
+        treeEditor.cancel();
+        return roadEditor.startFromActivePattern();
+    }
+
+    public boolean startRoadEditorFromActivePattern(SplineSubtype subtype) {
+        treeEditor.cancel();
+        return roadEditor.startFromActivePattern(subtype);
+    }
+
+    public TreeEditor getTreeEditor() {
+        return treeEditor;
+    }
+
+    public boolean startTreeEditorFromActivePattern() {
+        roadEditor.cancel();
+        return treeEditor.startFromActivePattern();
+    }
+
+    public boolean startTreeEditorFromActivePattern(TreeArchetype archetype) {
+        roadEditor.cancel();
+        return treeEditor.startFromActivePattern(archetype);
     }
 
     @Override
@@ -168,6 +204,8 @@ public final class EffortlessClientManager implements ClientManager {
         }
 
         if (Keys.KEY_ESCAPE.isDown()) {
+            roadEditor.cancel();
+            treeEditor.cancel();
             getEntrance().getStructureBuilder().resetInteractions(getRunningClient().getPlayer());
         }
 
@@ -321,6 +359,14 @@ public final class EffortlessClientManager implements ClientManager {
             getEntrance().getClient().getSoundManager().playButtonClickSound();
             new EffortlessProceduralPatternScreen(getEntrance()).attach();
         }
+        if (EffortlessKeys.EDIT_ROAD.getKeyBinding().consumeClick()) {
+            getEntrance().getClient().getSoundManager().playButtonClickSound();
+            if (roadEditor.isActive()) {
+                roadEditor.cancel();
+            } else {
+                startRoadEditorFromActivePattern();
+            }
+        }
 
 //        if (EffortlessKeys.EDIT_REPLACE.getKeyBinding().consumeClick()) {
 //            getEntrance().getClient().getSoundManager().playButtonClickSound();
@@ -379,6 +425,21 @@ public final class EffortlessClientManager implements ClientManager {
 
     public EventResult onInteractionInput(InteractionType type, InteractionHand hand) {
 
+        if (roadEditor.isActive()) {
+            if (!isInteractionCooldown()) {
+                return EventResult.interruptFalse();
+            }
+            resetInteractionCooldown();
+            return roadEditor.onInteraction(type, hand);
+        }
+        if (treeEditor.isActive()) {
+            if (!isInteractionCooldown()) {
+                return EventResult.interruptFalse();
+            }
+            resetInteractionCooldown();
+            return treeEditor.onInteraction(type, hand);
+        }
+
         if (getEntrance().getStructureBuilder().getContext(getRunningClient().getPlayer()).isDisabled()) {
             return EventResult.pass();
         }
@@ -418,6 +479,8 @@ public final class EffortlessClientManager implements ClientManager {
                 operationsRenderer.tick();
                 outlineRenderer.tick();
                 patternRenderer.tick();
+                roadEditor.tick();
+                treeEditor.tick();
             }
             case END -> {
             }
@@ -475,6 +538,8 @@ public final class EffortlessClientManager implements ClientManager {
 
     public void onRenderEnd(Renderer renderer, float deltaTick) {
         patternRenderer.render(renderer, deltaTick);
+        roadEditor.render(renderer, deltaTick);
+        treeEditor.render(renderer, deltaTick);
         outlineRenderer.render(renderer, deltaTick);
         operationsRenderer.render(renderer, deltaTick);
     }

@@ -11,6 +11,10 @@ import java.util.function.BooleanSupplier;
 import dev.huskuraft.effortless.EffortlessClient;
 import dev.huskuraft.effortless.building.BuildState;
 import dev.huskuraft.effortless.building.Context;
+import dev.huskuraft.effortless.building.clipboard.BlockData;
+import dev.huskuraft.effortless.building.clipboard.Clipboard;
+import dev.huskuraft.effortless.building.clipboard.Snapshot;
+import dev.huskuraft.effortless.building.config.ProceduralSafetyConfig;
 import dev.huskuraft.effortless.building.pattern.Pattern;
 import dev.huskuraft.effortless.building.pattern.Transformers;
 import dev.huskuraft.effortless.building.pattern.randomize.Chance;
@@ -22,6 +26,7 @@ import dev.huskuraft.universal.api.core.BlockItem;
 import dev.huskuraft.universal.api.core.BlockPosition;
 import dev.huskuraft.universal.api.core.Item;
 import dev.huskuraft.universal.api.core.ItemStack;
+import dev.huskuraft.universal.api.core.Items;
 import dev.huskuraft.universal.api.text.Text;
 
 /**
@@ -30,9 +35,11 @@ import dev.huskuraft.universal.api.text.Text;
  */
 public final class ProceduralContextCompiler {
 
-    public static final int MAX_COMPILED_POSITIONS = 250_000;
+    public static final int MAX_COMPILED_POSITIONS =
+            ProceduralSafetyConfig.DEFAULT.maxCompiledPositions();
     public static final long ESTIMATED_BYTES_PER_POSITION = 160L;
-    public static final long MAX_ESTIMATED_MEMORY_BYTES = 64L * 1024L * 1024L;
+    public static final long MAX_ESTIMATED_MEMORY_BYTES =
+            ProceduralSafetyConfig.DEFAULT.maxEstimatedMemoryBytes();
 
     private final EffortlessClient entrance;
 
@@ -131,17 +138,21 @@ public final class ProceduralContextCompiler {
                     List.of(operations.size() + " blocks > " + serverVolumeLimit + " allowed")
             );
         }
-        if (operations.size() > MAX_COMPILED_POSITIONS) {
+        var safety = entrance.getConfigStorage().get()
+                .proceduralSafetyConfig();
+        if (operations.size() > safety.maxCompiledPositions()) {
             return PreparationResult.failure(
                     "Procedural output exceeds the client compilation limit",
-                    List.of(operations.size() + " blocks > " + MAX_COMPILED_POSITIONS)
+                    List.of(operations.size() + " blocks > "
+                            + safety.maxCompiledPositions())
             );
         }
         long estimatedBytes = operations.size() * ESTIMATED_BYTES_PER_POSITION;
-        if (estimatedBytes > MAX_ESTIMATED_MEMORY_BYTES) {
+        if (estimatedBytes > safety.maxEstimatedMemoryBytes()) {
             return PreparationResult.failure(
                     "Procedural output is estimated to use too much temporary memory",
-                    List.of(estimatedBytes + " estimated bytes > " + MAX_ESTIMATED_MEMORY_BYTES)
+                    List.of(estimatedBytes + " estimated bytes > "
+                            + safety.maxEstimatedMemoryBytes())
             );
         }
 
@@ -213,6 +224,7 @@ public final class ProceduralContextCompiler {
                 effectivePreset,
                 stockTransformers,
                 operationOrder,
+                absoluteByGenerationPosition,
                 adaptation.ruleSet().orElseThrow(),
                 existingNeighbors,
                 effectiveSeed(
@@ -222,9 +234,13 @@ public final class ProceduralContextCompiler {
                         minY,
                         minZ
                 ),
-                Math.min(serverVolumeLimit, MAX_COMPILED_POSITIONS),
+                Math.min(
+                        serverVolumeLimit,
+                        safety.maxCompiledPositions()
+                ),
                 operations.size(),
-                estimatedBytes
+                estimatedBytes,
+                safety.maxEstimatedWork()
         ));
     }
 
@@ -320,7 +336,10 @@ public final class ProceduralContextCompiler {
                 cancelled,
                 progress
         );
-        var generated = ProceduralGenerator.generate(request);
+        var generated = ProceduralGenerator.generate(
+                request,
+                prepared.maximumEstimatedWork()
+        );
         if (!generated.isSuccess()) {
             var failure = generated.failure().orElseThrow();
             return ResolutionResult.failure(failure.message(), failure.details());
@@ -341,15 +360,25 @@ public final class ProceduralContextCompiler {
                 plan.sequence(),
                 Chance.MAX_ITEM_COUNT
         );
-        return ResolutionResult.success(new ResolvedCompilation(runs));
+        return ResolutionResult.success(new ResolvedCompilation(
+                runs,
+                plan.sequence()
+        ));
     }
 
     public CompilationResult finish(
             PreparedCompilation prepared,
             ResolvedCompilation resolved
     ) {
+        if (resolved.sequence().stream()
+                .anyMatch(ProceduralMaterial::isSpecial)) {
+            return finishExplicitSnapshot(prepared, resolved.sequence());
+        }
         var chances = resolved.runs().stream()
-                .map(run -> Chance.of(run.value(), run.length()))
+                .map(run -> Chance.<Item>of(
+                        run.value().placeableBlock().orElseThrow(),
+                        run.length()
+                ))
                 .toList();
         var randomizerId = UUID.nameUUIDFromBytes(
                 ("effortless:procedural:" + prepared.preset().id() + ":"
@@ -383,6 +412,109 @@ public final class ProceduralContextCompiler {
         return CompilationResult.success(
                 compiledContext,
                 prepared.positionCount(),
+                prepared.estimatedMemoryBytes()
+        );
+    }
+
+    private CompilationResult finishExplicitSnapshot(
+            PreparedCompilation prepared,
+            List<ProceduralMaterial> sequence
+    ) {
+        var absolutePositions = prepared.absolutePositions();
+        int minX = absolutePositions.values().stream()
+                .mapToInt(BlockPosition::x).min().orElseThrow();
+        int minY = absolutePositions.values().stream()
+                .mapToInt(BlockPosition::y).min().orElseThrow();
+        int minZ = absolutePositions.values().stream()
+                .mapToInt(BlockPosition::z).min().orElseThrow();
+        var anchor = new BlockPosition(minX, minY, minZ);
+        var air = Items.AIR.item().getBlock().getDefaultBlockState();
+        var blocks = new ArrayList<BlockData>(sequence.size());
+        boolean containsPlacement = false;
+        boolean containsErase = false;
+        for (int index = 0; index < sequence.size(); index++) {
+            var material = sequence.get(index);
+            if (material.kind() == ProceduralMaterial.Kind.SKIP) {
+                continue;
+            }
+            var absolute = absolutePositions.get(
+                    prepared.operationOrder().get(index)
+            );
+            var relative = new BlockPosition(
+                    absolute.x() - minX,
+                    absolute.y() - minY,
+                    absolute.z() - minZ
+            );
+            if (material.kind() == ProceduralMaterial.Kind.ERASER) {
+                containsErase = true;
+                blocks.add(new BlockData(relative, air, null));
+            } else {
+                containsPlacement = true;
+                blocks.add(new BlockData(
+                        relative,
+                        material.placeableBlock().orElseThrow()
+                                .getBlock().getDefaultBlockState(),
+                        null
+                ));
+            }
+        }
+        if (blocks.isEmpty()) {
+            return CompilationResult.failure(
+                    "Every generated position was skipped",
+                    List.of("Nothing would be sent to the server")
+            );
+        }
+        var constraints = prepared.source().configs().constraintConfig();
+        if (containsPlacement && !constraints.allowPlaceBlocks()) {
+            return CompilationResult.failure(
+                    "The server does not allow block placement",
+                    List.of()
+            );
+        }
+        if (containsErase && !constraints.allowBreakBlocks()) {
+            return CompilationResult.failure(
+                    "The server does not allow block breaking",
+                    List.of()
+            );
+        }
+        var snapshot = new Snapshot(
+                "Compiled procedural pattern",
+                System.currentTimeMillis(),
+                blocks
+        );
+        var reference = prepared.source().getInteraction(0);
+        var anchorInteraction = reference
+                .withPosition(anchor.getCenter())
+                .withBlockPosition(anchor);
+        var explicit = prepared.source().newInteraction()
+                .withBuildState(BuildState.PASTE_STRUCTURE)
+                .withNoInteraction()
+                .withNextInteraction(anchorInteraction)
+                .withClipboard(Clipboard.of(true, snapshot))
+                .withPattern(Pattern.DISABLED);
+        if (!explicit.hasPermission()) {
+            return CompilationResult.failure(
+                    "Skip/Eraser output requires server clipboard permission",
+                    List.of()
+            );
+        }
+        if (!explicit.isVolumeInBounds()) {
+            return CompilationResult.failure(
+                    "Explicit Skip/Eraser output exceeds the server "
+                            + "clipboard volume limit",
+                    List.of(explicit.getVolume() + " blocks > "
+                            + explicit.getMaxVolume() + " allowed")
+            );
+        }
+        if (!isStockProtocolContext(explicit)) {
+            return CompilationResult.failure(
+                    "Compatibility guard rejected explicit procedural output",
+                    List.of()
+            );
+        }
+        return CompilationResult.success(
+                explicit,
+                blocks.size(),
                 prepared.estimatedMemoryBytes()
         );
     }
@@ -439,17 +571,20 @@ public final class ProceduralContextCompiler {
             ProceduralPatternPreset preset,
             List<dev.huskuraft.effortless.building.pattern.Transformer> stockTransformers,
             List<GridPosition> operationOrder,
-            ProceduralRuleSet<Item> ruleSet,
+            java.util.Map<GridPosition, BlockPosition> absolutePositions,
+            ProceduralRuleSet<ProceduralMaterial> ruleSet,
             ExistingNeighborLookup existingNeighbors,
             long seed,
             int maximumPositions,
             int positionCount,
-            long estimatedMemoryBytes
+            long estimatedMemoryBytes,
+            long maximumEstimatedWork
     ) {
 
         public PreparedCompilation {
             stockTransformers = List.copyOf(stockTransformers);
             operationOrder = List.copyOf(operationOrder);
+            absolutePositions = java.util.Map.copyOf(absolutePositions);
         }
     }
 
@@ -461,11 +596,13 @@ public final class ProceduralContextCompiler {
     }
 
     public record ResolvedCompilation(
-            List<RunLengthSequence.Run<Item>> runs
+            List<RunLengthSequence.Run<ProceduralMaterial>> runs,
+            List<ProceduralMaterial> sequence
     ) {
 
         public ResolvedCompilation {
             runs = List.copyOf(runs);
+            sequence = List.copyOf(sequence);
         }
     }
 

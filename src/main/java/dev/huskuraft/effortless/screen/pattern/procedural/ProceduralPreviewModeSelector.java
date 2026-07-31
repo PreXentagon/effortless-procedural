@@ -7,8 +7,10 @@ import java.util.function.Supplier;
 
 import dev.huskuraft.effortless.building.structure.BuildFeature;
 import dev.huskuraft.effortless.building.structure.BuildFeatures;
-import dev.huskuraft.effortless.building.structure.BuildMode;
 import dev.huskuraft.effortless.building.structure.builder.Structure;
+import dev.huskuraft.effortless.client.generator.ClientToolSubtype;
+import dev.huskuraft.effortless.client.road.SplineSubtype;
+import dev.huskuraft.effortless.client.tree.TreeArchetype;
 import dev.huskuraft.universal.api.gui.AbstractWidget;
 import dev.huskuraft.universal.api.platform.Entrance;
 import dev.huskuraft.universal.api.renderer.Renderer;
@@ -25,31 +27,35 @@ final class ProceduralPreviewModeSelector extends AbstractWidget {
     private static final int SUBTYPE_HEIGHT = 34;
     private static final int OPTION_CELL_WIDTH = 29;
     private static final int GROUP_GAP = 9;
-    private static final List<BuildMode> MODES = Arrays.stream(
-            BuildMode.values()
-    ).filter(BuildMode::isEnabled).toList();
+    private static final List<ProceduralPreviewType> MODES =
+            ProceduralPreviewType.ALL;
 
-    private final Supplier<BuildMode> mode;
-    private final Consumer<BuildMode> modeConsumer;
+    private final Supplier<ProceduralPreviewType> mode;
+    private final Consumer<ProceduralPreviewType> modeConsumer;
     private final Supplier<PreviewOrientation> orientation;
     private final Consumer<PreviewOrientation> orientationConsumer;
     private final Supplier<Structure> structure;
     private final Consumer<BuildFeature> featureConsumer;
+    private final Supplier<ClientToolSubtype> clientSubtype;
+    private final Consumer<ClientToolSubtype> clientSubtypeConsumer;
     private final Supplier<Boolean> expanded;
-    private BuildMode hoveredMode;
+    private ProceduralPreviewType hoveredMode;
     private BuildFeature hoveredFeature;
+    private ClientToolSubtype hoveredSubtype;
 
     ProceduralPreviewModeSelector(
             Entrance entrance,
             int x,
             int y,
             int width,
-            Supplier<BuildMode> mode,
-            Consumer<BuildMode> modeConsumer,
+            Supplier<ProceduralPreviewType> mode,
+            Consumer<ProceduralPreviewType> modeConsumer,
             Supplier<PreviewOrientation> orientation,
             Consumer<PreviewOrientation> orientationConsumer,
             Supplier<Structure> structure,
             Consumer<BuildFeature> featureConsumer,
+            Supplier<ClientToolSubtype> clientSubtype,
+            Consumer<ClientToolSubtype> clientSubtypeConsumer,
             Supplier<Boolean> expanded
     ) {
         super(
@@ -66,6 +72,8 @@ final class ProceduralPreviewModeSelector extends AbstractWidget {
         this.orientationConsumer = orientationConsumer;
         this.structure = structure;
         this.featureConsumer = featureConsumer;
+        this.clientSubtype = clientSubtype;
+        this.clientSubtypeConsumer = clientSubtypeConsumer;
         this.expanded = expanded;
         this.focusable = true;
     }
@@ -83,6 +91,7 @@ final class ProceduralPreviewModeSelector extends AbstractWidget {
     ) {
         hoveredMode = null;
         hoveredFeature = null;
+        hoveredSubtype = null;
         renderModeToolbar(renderer, mouseX, mouseY);
         if (expanded.get()) {
             renderSubtypeRail(renderer, mouseX, mouseY);
@@ -124,7 +133,7 @@ final class ProceduralPreviewModeSelector extends AbstractWidget {
             }
             int iconX = left + Math.max(1, (right - left - 16) / 2);
             renderer.renderTexture(
-                    candidate.getIcon(),
+                        candidate.icon(),
                     iconX,
                     getY() + 4,
                     16,
@@ -141,7 +150,7 @@ final class ProceduralPreviewModeSelector extends AbstractWidget {
                     getY() + TOOLBAR_HEIGHT - 4,
                     right - 3,
                     getY() + TOOLBAR_HEIGHT - 2,
-                    candidate.getTintColor().getRGB() | 0xFF000000
+                    candidate.tintColor().getRGB() | 0xFF000000
             );
         }
     }
@@ -164,9 +173,40 @@ final class ProceduralPreviewModeSelector extends AbstractWidget {
                 top + SUBTYPE_HEIGHT - 1,
                 getRight(),
                 top + SUBTYPE_HEIGHT,
-                mode.get().getTintColor().getRGB() | 0xFF000000
+                mode.get().tintColor().getRGB() | 0xFF000000
         );
         int cursor = getX() + 7;
+        if (mode.get().isClientOnly()) {
+            cursor = renderLabel(renderer, "TYPE", cursor, top);
+            for (var value : clientSubtypes(mode.get())) {
+                boolean selected = value == clientSubtype.get();
+                boolean hovered = contains(
+                        mouseX, mouseY, cursor, top + 3,
+                        cursor + OPTION_CELL_WIDTH,
+                        top + SUBTYPE_HEIGHT - 4
+                );
+                if (hovered) {
+                    hoveredSubtype = value;
+                }
+                renderChoiceBackground(
+                        renderer, cursor, top, OPTION_CELL_WIDTH,
+                        selected, hovered
+                );
+                renderer.renderTexture(
+                        value.getIcon(), cursor + 6, top + 6,
+                        16, 16, 0f, 0f, 18, 18, 18, 18
+                );
+                cursor += OPTION_CELL_WIDTH + 2;
+            }
+            if (hoveredSubtype != null) {
+                renderer.renderTextFromEnd(
+                        getTypeface(), hoveredSubtype.getNameText(),
+                        getRight() - 7, top + 10,
+                        0xFFE4E7E9, true
+                );
+            }
+            return;
+        }
         var orientations = PreviewOrientation.choices(mode.get());
         if (orientations.size() > 1) {
             cursor = renderLabel(renderer, "VIEW", cursor, top);
@@ -266,7 +306,7 @@ final class ProceduralPreviewModeSelector extends AbstractWidget {
         } else if (hoveredMode != null) {
             renderer.renderTextFromEnd(
                     getTypeface(),
-                    hoveredMode.getDisplayName(),
+                    hoveredMode.displayName(),
                     getRight() - 7,
                     top + 10,
                     0xFFE4E7E9,
@@ -338,6 +378,19 @@ final class ProceduralPreviewModeSelector extends AbstractWidget {
             return false;
         }
         int cursor = getX() + 7;
+        if (mode.get().isClientOnly()) {
+            cursor += getTypeface().measureWidth("TYPE") + 7;
+            for (var value : clientSubtypes(mode.get())) {
+                if (mouseX >= cursor
+                        && mouseX < cursor + OPTION_CELL_WIDTH) {
+                    click();
+                    clientSubtypeConsumer.accept(value);
+                    return true;
+                }
+                cursor += OPTION_CELL_WIDTH + 2;
+            }
+            return false;
+        }
         var orientations = PreviewOrientation.choices(mode.get());
         if (orientations.size() > 1) {
             cursor += getTypeface().measureWidth("VIEW") + 7;
@@ -384,11 +437,29 @@ final class ProceduralPreviewModeSelector extends AbstractWidget {
         getEntrance().getClient().getSoundManager().playButtonClickSound();
     }
 
-    private static List<BuildFeatures> featureTypes(BuildMode mode) {
-        var supported = mode.getDefaultStructure().getSupportedFeatures();
+    private static List<BuildFeatures> featureTypes(
+            ProceduralPreviewType type
+    ) {
+        if (type.isClientOnly()) {
+            return List.of();
+        }
+        var supported = type.stockMode().getDefaultStructure()
+                .getSupportedFeatures();
         return Arrays.stream(BuildFeatures.values())
                 .filter(supported::contains)
                 .toList();
+    }
+
+    private static List<? extends ClientToolSubtype> clientSubtypes(
+            ProceduralPreviewType type
+    ) {
+        if (type.isRoad()) {
+            return List.of(SplineSubtype.values());
+        }
+        if (type.isTree()) {
+            return List.of(TreeArchetype.values());
+        }
+        return List.of();
     }
 
     private static String shortCategory(BuildFeatures type) {

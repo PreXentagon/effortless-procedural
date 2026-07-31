@@ -24,6 +24,18 @@ import dev.huskuraft.effortless.client.pattern.procedural.NeighborDirection;
 import dev.huskuraft.effortless.client.pattern.procedural.NeighborTopology;
 import dev.huskuraft.effortless.client.pattern.procedural.SeedMode;
 import dev.huskuraft.effortless.client.pattern.procedural.SpatialField;
+import dev.huskuraft.effortless.client.pattern.procedural.StructuralPlacementMode;
+import dev.huskuraft.effortless.client.road.RoadProfile;
+import dev.huskuraft.effortless.client.road.SplineCrossSectionBand;
+import dev.huskuraft.effortless.client.road.SplineCutoutConfig;
+import dev.huskuraft.effortless.client.road.SplineMaterialLinks;
+import dev.huskuraft.effortless.client.road.SplineSubtype;
+import dev.huskuraft.effortless.client.tree.TreeProfile;
+import dev.huskuraft.effortless.client.tree.TreeArchetype;
+import dev.huskuraft.effortless.client.tree.TreeGenerationConfig;
+import dev.huskuraft.effortless.client.tree.TreeMode;
+import dev.huskuraft.effortless.client.tree.TreeVariationSource;
+import dev.huskuraft.effortless.client.tree.TreeVariationStrength;
 import dev.huskuraft.universal.api.math.Vector3i;
 import dev.huskuraft.universal.api.nightconfig.core.Config;
 import dev.huskuraft.universal.api.text.Text;
@@ -287,5 +299,203 @@ class ProceduralPatternConfigSerializerTest {
         assertEquals(original, restored);
         assertEquals(asset.gradientField(), resolved.advanced().gradientField());
         assertEquals(asset.noiseConfig(), resolved.advanced().noiseConfig());
+    }
+
+    @Test
+    void roadProfileRoundTripsWithoutEnteringStockPatternData() {
+        var profile = new RoadProfile(
+                9, 2, 3, 0.35, 0.2,
+                SplineSubtype.CROWNED_ROAD,
+                new SplineMaterialLinks(
+                        UUID.randomUUID().toString(), "", "", "", "", ""
+                ),
+                List.of(new SplineCrossSectionBand(
+                        "Inward stair", 1, -1, 1,
+                        SplineCrossSectionBand.Side.BOTH,
+                        SplineCrossSectionBand.Placement.STAIR_INWARD,
+                        UUID.randomUUID().toString()
+                )),
+                new SplineCutoutConfig(
+                        true, 12, 2, 0.25, true, true,
+                        UUID.randomUUID().toString(),
+                        UUID.randomUUID().toString()
+                )
+        );
+        var preset = ProceduralPatternPreset.DEFAULT.withAdvanced(
+                ProceduralAdvancedConfig.DEFAULT.withRoadProfile(profile)
+        );
+        var original = new ProceduralPatternLibrary(
+                true,
+                preset.id(),
+                List.of(preset)
+        );
+        var serializer = new ProceduralPatternConfigSerializer();
+
+        var restored = serializer.deserialize(serializer.serialize(original));
+
+        assertEquals(
+                profile,
+                restored.activePreset().orElseThrow().advanced().roadProfile()
+        );
+        assertEquals(
+                preset.stockTransformers(),
+                restored.activePreset().orElseThrow().stockTransformers()
+        );
+    }
+
+    @Test
+    void legacyRoadProfileWithoutSubtypeMigratesToCustom() {
+        var profile = new RoadProfile(9, 3, 2, 0.4, 0.2);
+        var preset = ProceduralPatternPreset.DEFAULT.withAdvanced(
+                ProceduralAdvancedConfig.DEFAULT.withRoadProfile(profile)
+        );
+        var serializer = new ProceduralPatternConfigSerializer();
+        var legacy = serializer.serialize(new ProceduralPatternLibrary(
+                true, preset.id(), List.of(preset)
+        ));
+        legacy.set("formatVersion", 8);
+        legacy.<List<Config>>get("presets").get(0)
+                .<Config>get("advanced")
+                .<Config>get("roadProfile")
+                .remove("subtype");
+
+        var restored = serializer.deserialize(legacy)
+                .activePreset().orElseThrow()
+                .advanced().roadProfile();
+
+        assertEquals(SplineSubtype.CUSTOM, restored.subtype());
+        assertEquals(9, restored.surfaceWidth());
+        assertEquals(3, restored.thickness());
+        assertEquals(2, restored.shoulderWidth());
+    }
+
+    @Test
+    void treeProfileRoundTripsWithoutEnteringStockPatternData() {
+        var profile = new TreeProfile(3, 2, 7, 0.2);
+        var preset = ProceduralPatternPreset.DEFAULT.withAdvanced(
+                ProceduralAdvancedConfig.DEFAULT.withTreeProfile(profile)
+        );
+        var original = new ProceduralPatternLibrary(
+                true,
+                preset.id(),
+                List.of(preset)
+        );
+        var serializer = new ProceduralPatternConfigSerializer();
+
+        var restored = serializer.deserialize(serializer.serialize(original));
+
+        assertEquals(
+                profile,
+                restored.activePreset().orElseThrow().advanced().treeProfile()
+        );
+        assertEquals(
+                preset.stockTransformers(),
+                restored.activePreset().orElseThrow().stockTransformers()
+        );
+    }
+
+    @Test
+    void legacyPresetWithoutTreeProfileReceivesSafeDefaults() {
+        var serializer = new ProceduralPatternConfigSerializer();
+        var legacy = serializer.serialize(ProceduralPatternLibrary.DEFAULT);
+        legacy.set("formatVersion", 5);
+        legacy.<List<Config>>get("presets").get(0)
+                .<Config>get("advanced")
+                .remove("treeProfile");
+
+        var restored = serializer.deserialize(legacy);
+
+        assertEquals(
+                TreeProfile.DEFAULT,
+                restored.activePreset().orElseThrow()
+                        .advanced()
+                        .treeProfile()
+        );
+    }
+
+    @Test
+    void generatedTreeRecipeRoundTripsOnlyInClientConfiguration() {
+        var generation = TreeGenerationConfig
+                .forArchetype(TreeArchetype.WILLOW)
+                .withMode(TreeMode.GUIDED)
+                .withVariationStrength(TreeVariationStrength.EXPRESSIVE)
+                .withVariationSource(TreeVariationSource.WORLD_POSITION)
+                .withVariant(31)
+                .withHeightRange(17, 29)
+                .withBranchRange(11, 23)
+                .withFoliage(0.43, 0.37)
+                .withRoots(9, 1.6)
+                .withRecipes(
+                        "e053eb5a-2961-41e0-b455-00acaf7c022f",
+                        "",
+                        "6a9f98fb-53e5-4c6e-a494-30833ea0e36a",
+                        ""
+                );
+        var preset = ProceduralPatternPreset.DEFAULT.withAdvanced(
+                ProceduralAdvancedConfig.DEFAULT
+                        .withTreeGeneration(generation)
+                        .withStructuralPlacementMode(
+                                StructuralPlacementMode.SMART
+                        )
+        );
+        var original = new ProceduralPatternLibrary(
+                true, preset.id(), List.of(preset)
+        );
+        var serializer = new ProceduralPatternConfigSerializer();
+
+        var restored = serializer.deserialize(serializer.serialize(original));
+
+        assertEquals(
+                generation,
+                restored.activePreset().orElseThrow()
+                        .advanced().treeGeneration()
+        );
+        assertEquals(
+                StructuralPlacementMode.SMART,
+                restored.activePreset().orElseThrow()
+                        .advanced().structuralPlacementMode()
+        );
+    }
+
+    @Test
+    void existingPresetWithoutStructuralPlacementKeepsRandomBehavior() {
+        var serializer = new ProceduralPatternConfigSerializer();
+        var legacy = serializer.serialize(ProceduralPatternLibrary.DEFAULT);
+        legacy.set("formatVersion", 7);
+        legacy.<List<Config>>get("presets").get(0)
+                .<Config>get("advanced")
+                .remove("structuralPlacementMode");
+
+        var restored = serializer.deserialize(legacy);
+
+        assertEquals(
+                StructuralPlacementMode.RANDOM,
+                restored.activePreset().orElseThrow()
+                        .advanced().structuralPlacementMode()
+        );
+    }
+
+    @Test
+    void legacyTreeProfileMigratesToGuidedWorkflow() {
+        var profile = new TreeProfile(4, 2, 6, 0.25);
+        var preset = ProceduralPatternPreset.DEFAULT.withAdvanced(
+                ProceduralAdvancedConfig.DEFAULT.withTreeProfile(profile)
+        );
+        var library = new ProceduralPatternLibrary(
+                true, preset.id(), List.of(preset)
+        );
+        var serializer = new ProceduralPatternConfigSerializer();
+        var legacy = serializer.serialize(library);
+        legacy.set("formatVersion", 6);
+        legacy.<List<Config>>get("presets").get(0)
+                .<Config>get("advanced")
+                .remove("treeGeneration");
+
+        var restored = serializer.deserialize(legacy);
+        var tree = restored.activePreset().orElseThrow()
+                .advanced().treeGeneration();
+
+        assertEquals(TreeMode.GUIDED, tree.mode());
+        assertEquals(profile, tree.skeletonProfile());
     }
 }

@@ -12,6 +12,7 @@ import dev.huskuraft.universal.api.text.Text;
 import dev.huskuraft.effortless.building.config.BuilderConfig;
 import dev.huskuraft.effortless.building.config.ClientConfig;
 import dev.huskuraft.effortless.building.config.PatternConfig;
+import dev.huskuraft.effortless.building.config.ProceduralSafetyConfig;
 import dev.huskuraft.effortless.building.config.RenderConfig;
 import dev.huskuraft.effortless.screen.settings.SettingOptionsList;
 import dev.huskuraft.effortless.screen.transformer.EffortlessItemRandomizerPresetsScreen;
@@ -53,6 +54,109 @@ public class EffortlessBuilderSettingsScreen extends AbstractPanelScreen {
             var renderConfig = this.config.renderConfig();
             this.config = this.config.withRenderConfig(new RenderConfig(renderConfig.showBlockPreview(), renderConfig.showOtherPlayersBuild(), renderConfig.showOtherPlayersBuildTooltips(), value, renderConfig.maxRenderDistance()));
         });
+
+        var safety = this.config.proceduralSafetyConfig();
+        entries.addSwitchEntry(
+                Text.translate(
+                        "effortless.procedural_settings.show_preparation"
+                ),
+                null,
+                safety.showPreparationMessages(),
+                value -> this.config =
+                        this.config.withProceduralSafetyConfig(
+                                this.config.proceduralSafetyConfig()
+                                        .withPreparationMessages(value)
+                        )
+        );
+        entries.addIntegerEntry(
+                Text.translate(
+                        "effortless.procedural_settings.async_threshold"
+                ),
+                null,
+                safety.asyncPreviewPositionThreshold(),
+                0,
+                ProceduralSafetyConfig.MAX_COMPILED_POSITIONS_LIMIT,
+                1_000,
+                value -> this.config =
+                        this.config.withProceduralSafetyConfig(
+                                this.config.proceduralSafetyConfig()
+                                        .withAsyncThreshold(value)
+                        )
+        );
+        entries.addIntegerEntry(
+                Text.translate(
+                        "effortless.procedural_settings.max_positions"
+                ),
+                null,
+                safety.maxCompiledPositions(),
+                1,
+                ProceduralSafetyConfig.MAX_COMPILED_POSITIONS_LIMIT,
+                10_000,
+                value -> this.config =
+                        this.config.withProceduralSafetyConfig(
+                                this.config.proceduralSafetyConfig()
+                                        .withMaxPositions(value)
+                        )
+        );
+        entries.addIntegerEntry(
+                Text.translate(
+                        "effortless.procedural_settings.max_memory_mib"
+                ),
+                null,
+                safety.maxEstimatedMemoryMiB(),
+                1,
+                ProceduralSafetyConfig.MAX_MEMORY_MIB_LIMIT,
+                16,
+                value -> this.config =
+                        this.config.withProceduralSafetyConfig(
+                                this.config.proceduralSafetyConfig()
+                                        .withMaxMemoryMiB(value)
+                        )
+        );
+        entries.addIntegerEntry(
+                Text.translate(
+                        "effortless.procedural_settings.max_packet_mib"
+                ),
+                null,
+                safety.maxPacketMiB(),
+                1,
+                ProceduralSafetyConfig.MAX_PACKET_MIB_LIMIT,
+                value -> this.config =
+                        this.config.withProceduralSafetyConfig(
+                                this.config.proceduralSafetyConfig()
+                                        .withMaxPacketMiB(value)
+                        )
+        );
+        entries.addIntegerEntry(
+                Text.translate(
+                        "effortless.procedural_settings.max_work_millions"
+                ),
+                null,
+                safety.maxEstimatedWorkMillions(),
+                1,
+                ProceduralSafetyConfig.MAX_WORK_MILLIONS_LIMIT,
+                50,
+                value -> this.config =
+                        this.config.withProceduralSafetyConfig(
+                                this.config.proceduralSafetyConfig()
+                                        .withMaxWorkMillions(value)
+                        )
+        );
+        entries.addIntegerEntry(
+                Text.translate(
+                        "effortless.procedural_settings.road_preview_distance"
+                ),
+                null,
+                safety.roadPreviewDistance(),
+                1,
+                ProceduralSafetyConfig.MAX_PREVIEW_DISTANCE,
+                16,
+                value -> this.config =
+                        this.config.withProceduralSafetyConfig(
+                                this.config.proceduralSafetyConfig()
+                                        .withRoadPreviewDistance(value)
+                        )
+        );
 //        entries.addIntegerEntry(Text.translate("effortless.render_settings.max_render_distance"), null, config.maxRenderDistance(), RenderConfig.MIN_MAX_RENDER_DISTANCE, RenderConfig.MAX_MAX_RENDER_DISTANCE, (value) -> {
 //            this.config = new RenderConfig(config.showOtherPlayersBuild(), config.showOtherPlayersBuildTooltips(), config.showBlockPreview(), config.maxRenderVolume(), value);
 //        });

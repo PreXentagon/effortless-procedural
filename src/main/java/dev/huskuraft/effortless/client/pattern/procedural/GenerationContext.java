@@ -13,7 +13,8 @@ public record GenerationContext<T>(
         Set<GridPosition> targetPositions,
         Map<GridPosition, Candidate<T>> generated,
         ExistingNeighborLookup existingNeighbors,
-        Map<String, Integer> generatedCounts
+        Map<String, Integer> generatedCounts,
+        CoordinateLookup coordinateLookup
 ) {
 
     public GenerationContext(
@@ -35,8 +36,40 @@ public record GenerationContext<T>(
                 targetPositions,
                 generated,
                 existingNeighbors,
-                countCandidates(generated)
+                countCandidates(generated),
+                CoordinateLookup.NONE
         );
+    }
+
+    public GenerationContext(
+            long seed,
+            GridPosition position,
+            int ordinal,
+            int positionCount,
+            GenerationBounds bounds,
+            Set<GridPosition> targetPositions,
+            Map<GridPosition, Candidate<T>> generated,
+            ExistingNeighborLookup existingNeighbors,
+            Map<String, Integer> generatedCounts
+    ) {
+        this(
+                seed,
+                position,
+                ordinal,
+                positionCount,
+                bounds,
+                targetPositions,
+                generated,
+                existingNeighbors,
+                generatedCounts,
+                CoordinateLookup.NONE
+        );
+    }
+
+    public GenerationContext {
+        coordinateLookup = coordinateLookup == null
+                ? CoordinateLookup.NONE
+                : coordinateLookup;
     }
 
     public Optional<String> neighborId(GridPosition neighbor, NeighborScope scope) {

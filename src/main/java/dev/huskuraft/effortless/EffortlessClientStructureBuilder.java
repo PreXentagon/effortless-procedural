@@ -76,10 +76,6 @@ import dev.huskuraft.effortless.session.config.SessionConfig;
 
 public final class EffortlessClientStructureBuilder extends StructureBuilder {
 
-    private static final int ASYNC_PREVIEW_POSITION_THRESHOLD = 4_096;
-    private static final int MAX_PROCEDURAL_PACKET_BYTES =
-            7 * 1024 * 1024;
-
     private final EffortlessClient entrance;
 
     private final Map<UUID, Context> contexts = new HashMap<>();
@@ -162,7 +158,9 @@ public final class EffortlessClientStructureBuilder extends StructureBuilder {
                         packetBytes
                 );
             }
-            if (packetBytes > MAX_PROCEDURAL_PACKET_BYTES) {
+            int maximumPacketBytes = getEntrance().getConfigStorage().get()
+                    .proceduralSafetyConfig().maxPacketBytes();
+            if (packetBytes > maximumPacketBytes) {
                 setContext(player, context.newInteraction());
                 notifyProceduralFailure(
                         player,
@@ -170,7 +168,7 @@ public final class EffortlessClientStructureBuilder extends StructureBuilder {
                                 "Compiled placement packet is too large",
                                 List.of(
                                         packetBytes + " bytes > "
-                                                + MAX_PROCEDURAL_PACKET_BYTES
+                                                + maximumPacketBytes
                                                 + " safe bytes"
                                 )
                         )
@@ -653,6 +651,14 @@ public final class EffortlessClientStructureBuilder extends StructureBuilder {
             return;
         }
 
+        if (getEntrance().getClientManager().getRoadEditor().isActive()
+                || getEntrance().getClientManager().getTreeEditor()
+                        .isActive()) {
+            invalidateProceduralPreview();
+            clearBuildMessage(player);
+            return;
+        }
+
         if (getEntrance().getConfigStorage().get().builderConfig().passiveMode() && !EffortlessKeys.PASSIVE_BUILD_MODIFIER.getKeyBinding().isDown() && !getContext(player).isBuilding()) {
             cancelProceduralPreview();
             getEntrance().getClientManager().getTooltipRenderer().hideEntry(generateId(player.getId(), Context.class), 0, false);
@@ -804,7 +810,10 @@ public final class EffortlessClientStructureBuilder extends StructureBuilder {
             return preparation.failure().orElseThrow();
         }
         var prepared = preparation.prepared().orElseThrow();
-        if (prepared.positionCount() < ASYNC_PREVIEW_POSITION_THRESHOLD) {
+        int asyncThreshold = getEntrance().getConfigStorage().get()
+                .proceduralSafetyConfig()
+                .asyncPreviewPositionThreshold();
+        if (prepared.positionCount() < asyncThreshold) {
             var resolutionResult = proceduralCompiler.resolve(
                     prepared,
                     Thread.currentThread()::isInterrupted,
@@ -848,12 +857,15 @@ public final class EffortlessClientStructureBuilder extends StructureBuilder {
                 )
         );
         proceduralPreviewJob = job;
-        player.sendMessage(Effortless.getSystemMessage(
-                Text.text(
-                        "Compiling procedural preview for "
-                                + prepared.positionCount() + " blocks..."
-                ).withStyle(ChatFormatting.GRAY)
-        ));
+        if (getEntrance().getConfigStorage().get()
+                .proceduralSafetyConfig().showPreparationMessages()) {
+            player.sendMessage(Effortless.getSystemMessage(
+                    Text.text(
+                            "Compiling procedural preview for "
+                                    + prepared.positionCount() + " blocks..."
+                    ).withStyle(ChatFormatting.GRAY)
+            ));
+        }
     }
 
     private ProceduralContextCompiler.CompilationResult
@@ -899,10 +911,13 @@ public final class EffortlessClientStructureBuilder extends StructureBuilder {
         }
         proceduralPreviewCache = new PreviewCompilationCache(key, result);
         if (result.isSuccess()) {
-            player.sendMessage(Effortless.getSystemMessage(
-                    Text.text("Procedural preview ready")
-                            .withStyle(ChatFormatting.GREEN)
-            ));
+            if (getEntrance().getConfigStorage().get()
+                    .proceduralSafetyConfig().showPreparationMessages()) {
+                player.sendMessage(Effortless.getSystemMessage(
+                        Text.text("Procedural preview ready")
+                                .withStyle(ChatFormatting.GREEN)
+                ));
+            }
             return ProceduralContextCompiler.CompilationResult.success(
                     context.withPattern(
                             result.context().orElseThrow().pattern()
@@ -918,6 +933,10 @@ public final class EffortlessClientStructureBuilder extends StructureBuilder {
             Player player,
             AsyncPreviewJob job
     ) {
+        if (!getEntrance().getConfigStorage().get()
+                .proceduralSafetyConfig().showPreparationMessages()) {
+            return;
+        }
         var progress = job.progress.get();
         if (progress.total() <= 0) {
             return;
@@ -950,6 +969,121 @@ public final class EffortlessClientStructureBuilder extends StructureBuilder {
                 job.future.cancel(true);
             }
         }
+    }
+
+    /**
+     * Places an already materialized client snapshot through the unchanged
+     * stock clipboard protocol. The previous build tool, clipboard and pattern
+     * are restored immediately after the one-shot request is emitted.
+     */
+    public BuildResult placeCompiledSnapshot(
+            Player player,
+            Snapshot snapshot,
+            BlockPosition anchor,
+            BlockInteraction referenceInteraction
+    ) {
+        return applyCompiledSnapshot(
+                player,
+                snapshot,
+                anchor,
+                referenceInteraction,
+                "Road placement"
+        );
+    }
+
+    /**
+     * Executes an already materialized client snapshot through the stock
+     * clipboard request. This is also used for explicit air snapshots, whose
+     * entries follow the server's normal block-breaking path.
+     */
+    public BuildResult applyCompiledSnapshot(
+            Player player,
+            Snapshot snapshot,
+            BlockPosition anchor,
+            BlockInteraction referenceInteraction,
+            String operationName
+    ) {
+        var label = operationName == null || operationName.isBlank()
+                ? "Compiled operation"
+                : operationName;
+        if (snapshot == null || snapshot.isEmpty()) {
+            player.sendMessage(Effortless.getSystemMessage(
+                    Text.text(label + " contains no blocks")
+                            .withStyle(ChatFormatting.RED)
+            ));
+            return BuildResult.CANCELED;
+        }
+        var previous = getContext(player);
+        var structure = previous.isDisabled()
+                ? getEntrance().getConfigStorage()
+                        .getStructure(BuildMode.SINGLE)
+                : previous.structure();
+        var anchorInteraction = referenceInteraction
+                .withPosition(anchor.getCenter())
+                .withBlockPosition(anchor);
+        var outgoing = previous.newInteraction()
+                .withStructure(structure)
+                .withBuildState(BuildState.PASTE_STRUCTURE)
+                .withBuildType(BuildType.BUILD)
+                .withNoInteraction()
+                .withNextInteraction(anchorInteraction)
+                .withClipboard(Clipboard.of(true, snapshot))
+                .withPattern(Pattern.DISABLED)
+                .withPlayerExtras(player);
+
+        if (!outgoing.hasPermission()) {
+            player.sendMessage(Effortless.getSystemMessage(
+                    Text.text("The server does not allow clipboard operations")
+                            .withStyle(ChatFormatting.RED)
+            ));
+            return BuildResult.CANCELED;
+        }
+        if (!outgoing.isVolumeInBounds()) {
+            player.sendMessage(Effortless.getSystemMessage(
+                    Text.text(label + " bounding volume exceeds the server limit ("
+                            + outgoing.getVolume() + "/"
+                            + outgoing.getMaxVolume() + ")")
+                            .withStyle(ChatFormatting.RED)
+            ));
+            return BuildResult.CANCELED;
+        }
+
+        int packetBytes;
+        try {
+            packetBytes = measurePacketBytes(
+                    new PlayerBuildPacket(player.getId(), outgoing)
+            );
+        } catch (RuntimeException exception) {
+            player.sendMessage(Effortless.getSystemMessage(
+                    Text.text("Could not serialize " + label.toLowerCase(Locale.ROOT)
+                            + ": "
+                            + exception.getMessage())
+                            .withStyle(ChatFormatting.RED)
+            ));
+            return BuildResult.CANCELED;
+        }
+        int maximumPacketBytes = getEntrance().getConfigStorage().get()
+                .proceduralSafetyConfig().maxPacketBytes();
+        if (packetBytes > maximumPacketBytes) {
+            player.sendMessage(Effortless.getSystemMessage(
+                    Text.text(label + " packet is too large (" + packetBytes
+                            + " bytes > " + maximumPacketBytes + ")")
+                            .withStyle(ChatFormatting.RED)
+            ));
+            return BuildResult.CANCELED;
+        }
+
+        Effortless.LOGGER.info(
+                "{}: {} blocks, {} bounding volume, "
+                        + "{} serialized packet bytes",
+                label,
+                snapshot.blockData().size(),
+                snapshot.volume(),
+                packetBytes
+        );
+        var result = updateContext(player, ignored -> outgoing);
+        setContext(player, previous.newInteraction());
+        return result;
     }
 
     private void invalidateProceduralPreview() {

@@ -71,9 +71,7 @@ final class SpatialFieldEditorWidget extends AbstractWidget {
                 0xFFE7E7E7,
                 true
         );
-        boolean scalarCoordinate = currentField().coordinate()
-                == Coordinate.TRAVERSAL
-                || currentField().coordinate() == Coordinate.DISTANCE;
+        boolean scalarCoordinate = currentField().coordinate().isScalar();
         renderer.renderTextFromEnd(
                 getTypeface(),
                 Text.text(scalarCoordinate
@@ -218,8 +216,7 @@ final class SpatialFieldEditorWidget extends AbstractWidget {
         double dx = mouseX - center.x();
         double dy = mouseY - center.y();
         double angle = Math.atan2(dy, dx);
-        boolean scalarCoordinate = current.coordinate() == Coordinate.TRAVERSAL
-                || current.coordinate() == Coordinate.DISTANCE;
+        boolean scalarCoordinate = current.coordinate().isScalar();
         double rotation = scalarCoordinate
                 ? current.rotationDegrees()
                 : current.coordinate() == Coordinate.Y
@@ -243,7 +240,9 @@ final class SpatialFieldEditorWidget extends AbstractWidget {
                     current.scaleY(),
                     scale
             );
-            case X, DISTANCE, TRAVERSAL -> rotated.withScale(
+            case X, DISTANCE, TRAVERSAL, PATH, LATERAL, DEPTH,
+                    THICKNESS, SLOPE, TIP, JUNCTION ->
+                    rotated.withScale(
                     scale,
                     current.scaleY(),
                     current.scaleZ()
@@ -265,7 +264,9 @@ final class SpatialFieldEditorWidget extends AbstractWidget {
 
     private Point directionPoint(SpatialField current, Point center) {
         double scale = switch (current.coordinate()) {
-            case X, DISTANCE, TRAVERSAL -> current.scaleX();
+            case X, DISTANCE, TRAVERSAL, PATH, LATERAL, DEPTH,
+                    THICKNESS, SLOPE, TIP, JUNCTION ->
+                    current.scaleX();
             case Y -> current.scaleY();
             case Z -> current.scaleZ();
         };
@@ -274,8 +275,7 @@ final class SpatialFieldEditorWidget extends AbstractWidget {
                 Math.min(0.42, 0.22 * scale)
         );
         double radians = Math.toRadians(current.rotationDegrees());
-        double angle = current.coordinate() == Coordinate.TRAVERSAL
-                || current.coordinate() == Coordinate.DISTANCE
+        double angle = current.coordinate().isScalar()
                 ? 0.0
                 : current.coordinate() == Coordinate.Y
                 ? Math.PI / 2.0 + radians

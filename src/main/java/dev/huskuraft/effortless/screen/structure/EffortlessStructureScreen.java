@@ -1,9 +1,13 @@
 package dev.huskuraft.effortless.screen.structure;
 
+import java.awt.Color;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
+import dev.huskuraft.effortless.Effortless;
 import dev.huskuraft.effortless.EffortlessClient;
+import dev.huskuraft.universal.api.core.ResourceLocation;
 import dev.huskuraft.universal.api.core.Player;
 import dev.huskuraft.universal.api.gui.AbstractWidget;
 import dev.huskuraft.universal.api.gui.text.TextWidget;
@@ -23,12 +27,27 @@ import dev.huskuraft.effortless.building.replace.ReplaceStrategy;
 import dev.huskuraft.effortless.building.settings.Misc;
 import dev.huskuraft.effortless.building.structure.BuildFeature;
 import dev.huskuraft.effortless.building.structure.builder.Structure;
+import dev.huskuraft.effortless.client.road.SplineSubtype;
+import dev.huskuraft.effortless.client.tree.TreeArchetype;
 import dev.huskuraft.effortless.screen.clipboard.EffortlessClipboardScreen;
 import dev.huskuraft.effortless.screen.pattern.procedural.EffortlessProceduralPatternScreen;
 import dev.huskuraft.effortless.screen.settings.EffortlessSettingsScreen;
 import dev.huskuraft.effortless.screen.wheel.AbstractWheelScreen;
 
-public class EffortlessStructureScreen extends AbstractWheelScreen<Structure, Option> {
+public class EffortlessStructureScreen
+        extends AbstractWheelScreen<Object, Option> {
+
+    private static final String ROAD_SLOT_ID = "effortless:client_road";
+    private static final String TREE_SLOT_ID = "effortless:client_tree";
+    private static final Color ROAD_TINT =
+            new Color(0.31f, 0.62f, 0.67f, 0.72f);
+    private static final Color TREE_TINT =
+            new Color(0.37f, 0.64f, 0.40f, 0.72f);
+
+    private enum ClientStructure {
+        ROAD,
+        TREE
+    }
 
     private static final Button<Option> UNDO_OPTION = button(UndoRedo.UNDO);
     private static final Button<Option> REDO_OPTION = button(UndoRedo.REDO);
@@ -137,13 +156,39 @@ public class EffortlessStructureScreen extends AbstractWheelScreen<Structure, Op
         this.assignedKey = assignedKey;
     }
 
-    public static Slot<Structure> slot(Structure structure) {
+    public static Slot<Object> slot(Structure structure) {
         return slot(
                 structure.getMode(),
                 structure.getMode().getDisplayName(),
                 structure.getMode().getIcon(),
                 structure.getMode().getTintColor(),
-                structure);
+                (Object) structure);
+    }
+
+    private static Slot<Object> roadSlot() {
+        return slot(
+                ROAD_SLOT_ID,
+                Text.translate("effortless.mode.road"),
+                ResourceLocation.of(
+                        Effortless.MOD_ID,
+                        "textures/mode/diagonal_line.png"
+                ),
+                ROAD_TINT,
+                ClientStructure.ROAD
+        );
+    }
+
+    private static Slot<Object> treeSlot() {
+        return slot(
+                TREE_SLOT_ID,
+                Text.translate("effortless.mode.tree"),
+                ResourceLocation.of(
+                        Effortless.MOD_ID,
+                        "textures/mode/cone.png"
+                ),
+                TREE_TINT,
+                ClientStructure.TREE
+        );
     }
 
     @Override
@@ -166,7 +211,26 @@ public class EffortlessStructureScreen extends AbstractWheelScreen<Structure, Op
 
         setRadialSelectResponder((slot, click) -> {
             setScaleAnimation(3f);
-            getEntrance().getStructureBuilder().setStructure(getPlayer(), slot.getContent());
+            if (slot.getContent() == ClientStructure.ROAD) {
+                getEntrance().getClientManager()
+                        .startRoadEditorFromActivePattern();
+                onReload();
+                return;
+            }
+            if (slot.getContent() == ClientStructure.TREE) {
+                getEntrance().getClientManager()
+                        .startTreeEditorFromActivePattern();
+                onReload();
+                return;
+            }
+            if (slot.getContent() instanceof Structure structure) {
+                getEntrance().getClientManager().getRoadEditor().cancel();
+                getEntrance().getClientManager().getTreeEditor().cancel();
+                getEntrance().getStructureBuilder().setStructure(
+                        getPlayer(),
+                        structure
+                );
+            }
         });
         setRadialOptionSelectResponder((entry, click) -> {
             setScaleAnimation(3f);
@@ -241,6 +305,18 @@ public class EffortlessStructureScreen extends AbstractWheelScreen<Structure, Op
                 }
                 return;
             }
+            if (entry.getContent() instanceof SplineSubtype subtype) {
+                getEntrance().getClientManager()
+                        .startRoadEditorFromActivePattern(subtype);
+                onReload();
+                return;
+            }
+            if (entry.getContent() instanceof TreeArchetype archetype) {
+                getEntrance().getClientManager()
+                        .startTreeEditorFromActivePattern(archetype);
+                onReload();
+                return;
+            }
         });
 
         this.passiveModeTextWidget = addWidget(new TextWidget(getEntrance(), getX() + getWidth() - 10, getY() + getHeight() - 18, Text.translate("effortless.option.passive_mode"), TextWidget.Gravity.END));
@@ -266,10 +342,47 @@ public class EffortlessStructureScreen extends AbstractWheelScreen<Structure, Op
     public void onReload() {
         passiveModeTextWidget.setVisible(getEntrance().getConfigStorage().get().builderConfig().passiveMode());
 
-        setRadialSlots(getEntrance().getConfigStorage().get().structureMap().values().stream().map(EffortlessStructureScreen::slot).toList());
+        var slots = new ArrayList<Slot<Object>>();
+        slots.addAll(getEntrance().getConfigStorage().get()
+                .structureMap()
+                .values()
+                .stream()
+                .map(EffortlessStructureScreen::slot)
+                .toList());
+        slots.add(roadSlot());
+        slots.add(treeSlot());
+        setRadialSlots(slots);
 
         var structure = getEntrance().getStructureBuilder().getContext(getPlayer()).structure();
 //        var structure = getEntrance().getStructureBuilder().getContext(getPlayer()).structure();
+        if (getEntrance().getClientManager().getRoadEditor().isActive()) {
+            setSelectedSlots(roadSlot());
+            var selected = getEntrance().getClientManager()
+                    .getRoadEditor().profile().subtype();
+            setRightButtons(List.of(buttonSet(
+                    Arrays.stream(SplineSubtype.values())
+                            .map(value -> button(
+                                    (Option) value,
+                                    value == selected
+                            ))
+                            .toList()
+            )));
+            return;
+        }
+        if (getEntrance().getClientManager().getTreeEditor().isActive()) {
+            setSelectedSlots(treeSlot());
+            var selected = getEntrance().getClientManager()
+                    .getTreeEditor().generation().archetype();
+            setRightButtons(List.of(buttonSet(
+                    Arrays.stream(TreeArchetype.values())
+                            .map(value -> button(
+                                    (Option) value,
+                                    value == selected
+                            ))
+                            .toList()
+            )));
+            return;
+        }
         setSelectedSlots(slot(structure));
         setRightButtons(
                 structure.getSupportedFeatures().stream().map(feature -> buttonSet(Arrays.stream(feature.getEntries()).map((Feature option) -> button((Option) option, structure.getFeatures().contains(option))).toList())).toList()

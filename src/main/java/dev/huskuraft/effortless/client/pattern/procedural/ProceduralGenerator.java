@@ -19,6 +19,18 @@ public final class ProceduralGenerator {
     }
 
     public static <T> GenerationResult<T> generate(GenerationRequest<T> request) {
+        return generate(request, MAX_ESTIMATED_WORK);
+    }
+
+    public static <T> GenerationResult<T> generate(
+            GenerationRequest<T> request,
+            long maximumEstimatedWork
+    ) {
+        if (maximumEstimatedWork < 1) {
+            throw new IllegalArgumentException(
+                    "Maximum estimated work must be positive"
+            );
+        }
         var validationErrors = request.ruleSet().validate();
         if (!validationErrors.isEmpty()) {
             return failure(
@@ -43,16 +55,17 @@ public final class ProceduralGenerator {
 
         long estimatedWork = estimateWork(
                 request.positions().size(),
-                request.ruleSet()
+                request.ruleSet(),
+                maximumEstimatedWork
         );
-        if (estimatedWork > MAX_ESTIMATED_WORK) {
+        if (estimatedWork > maximumEstimatedWork) {
             return failure(
                     GenerationResult.GenerationFailure.Code.TOO_EXPENSIVE,
                     "Procedural generation is estimated to require too much work",
                     Optional.empty(),
                     List.of(
                             "Estimated rule checks exceed "
-                                    + MAX_ESTIMATED_WORK,
+                                    + maximumEstimatedWork,
                             "Reduce the selection size, spacing/run radius, "
                                     + "retry count, repair passes, or cleanup passes"
                     )
@@ -106,7 +119,8 @@ public final class ProceduralGenerator {
                     unique,
                     generated,
                     request.existingNeighbors(),
-                    generatedCounts
+                    generatedCounts,
+                    request.coordinateLookup()
             );
             var weights = new double[candidates.size()];
             java.util.Arrays.fill(weights, 1.0);
@@ -304,7 +318,8 @@ public final class ProceduralGenerator {
                         targets,
                         snapshot,
                         request.existingNeighbors(),
-                        snapshotCounts
+                        snapshotCounts,
+                        request.coordinateLookup()
                 );
                 for (var rule : request.ruleSet().cleanupRules()) {
                     var replacementId = rule.replacementCandidateId(context);
@@ -376,7 +391,8 @@ public final class ProceduralGenerator {
                         targets,
                         generated,
                         request.existingNeighbors(),
-                        generatedCounts
+                        generatedCounts,
+                        request.coordinateLookup()
                 );
                 var current = generated.get(position);
                 var currentEvaluation = evaluate(
@@ -529,7 +545,8 @@ public final class ProceduralGenerator {
                     targets,
                     generated,
                     request.existingNeighbors(),
-                    generatedCounts
+                    generatedCounts,
+                    request.coordinateLookup()
             );
             var evaluation = evaluate(
                     generated.get(position),
@@ -632,7 +649,8 @@ public final class ProceduralGenerator {
 
     private static long estimateWork(
             int positionCount,
-            ProceduralRuleSet<?> ruleSet
+            ProceduralRuleSet<?> ruleSet,
+            long cap
     ) {
         long candidateCount = ruleSet.candidates().size();
         long attempts = Math.min(ruleSet.retryLimit(), candidateCount);
@@ -641,7 +659,8 @@ public final class ProceduralGenerator {
         for (var source : ruleSet.weightSources()) {
             sourceCost = cappedAdd(
                     sourceCost,
-                    Math.max(0, source.estimatedCostPerCandidate())
+                    Math.max(0, source.estimatedCostPerCandidate()),
+                    cap
             );
         }
         long evaluationCost = 0;
@@ -649,79 +668,109 @@ public final class ProceduralGenerator {
         for (var constraint : ruleSet.constraints()) {
             evaluationCost = cappedAdd(
                     evaluationCost,
-                    Math.max(0, constraint.estimatedEvaluationCost())
+                    Math.max(0, constraint.estimatedEvaluationCost()),
+                    cap
             );
             preferenceCost = cappedAdd(
                     preferenceCost,
-                    Math.max(0, constraint.estimatedPreferenceCost())
+                    Math.max(0, constraint.estimatedPreferenceCost()),
+                    cap
             );
         }
 
         long weightAndPreference = cappedMultiply(
                 candidateCount,
-                cappedAdd(sourceCost, preferenceCost)
+                cappedAdd(sourceCost, preferenceCost, cap),
+                cap
         );
         long candidateEvaluations = cappedMultiply(
                 attempts,
-                evaluationCost
+                evaluationCost,
+                cap
         );
         if (ruleSet.fallbackCandidateId().isPresent()) {
             candidateEvaluations = cappedAdd(
                     candidateEvaluations,
-                    evaluationCost
+                    evaluationCost,
+                    cap
             );
         }
         long initialPerPosition = cappedAdd(
                 weightAndPreference,
-                candidateEvaluations
+                candidateEvaluations,
+                cap
         );
 
         long repairPerPosition = cappedAdd(
                 evaluationCost,
-                cappedAdd(weightAndPreference, candidateEvaluations)
+                cappedAdd(weightAndPreference, candidateEvaluations, cap),
+                cap
         );
         long repairWork = cappedMultiply(
                 positionCount,
-                cappedMultiply(ruleSet.repairPasses(), repairPerPosition)
+                cappedMultiply(
+                        ruleSet.repairPasses(),
+                        repairPerPosition,
+                        cap
+                ),
+                cap
         );
 
         long cleanupCost = 0;
         for (var cleanupRule : ruleSet.cleanupRules()) {
             cleanupCost = cappedAdd(
                     cleanupCost,
-                    Math.max(0, cleanupRule.estimatedCostPerPosition())
+                    Math.max(0, cleanupRule.estimatedCostPerPosition()),
+                    cap
             );
         }
         long cleanupWork = cappedMultiply(
                 positionCount,
-                cappedMultiply(ruleSet.cleanupPasses(), cleanupCost)
+                cappedMultiply(
+                        ruleSet.cleanupPasses(),
+                        cleanupCost,
+                        cap
+                ),
+                cap
         );
 
         // One validation follows generation/repair and another follows cleanup.
         long validationWork = cappedMultiply(
                 positionCount,
-                cappedMultiply(2, evaluationCost)
+                cappedMultiply(2, evaluationCost, cap),
+                cap
         );
         long generationWork = cappedMultiply(
                 positionCount,
-                initialPerPosition
+                initialPerPosition,
+                cap
         );
         return cappedAdd(
-                cappedAdd(generationWork, repairWork),
-                cappedAdd(cleanupWork, validationWork)
+                cappedAdd(generationWork, repairWork, cap),
+                cappedAdd(cleanupWork, validationWork, cap),
+                cap
         );
     }
 
-    private static long cappedAdd(long left, long right) {
-        long cap = MAX_ESTIMATED_WORK + 1;
-        if (left >= cap || right >= cap || left > cap - right) {
-            return cap;
+    private static long cappedAdd(long left, long right, long maximum) {
+        long overflow = maximum == Long.MAX_VALUE
+                ? Long.MAX_VALUE
+                : maximum + 1;
+        if (left >= overflow || right >= overflow
+                || left > overflow - right) {
+            return overflow;
         }
         return left + right;
     }
 
-    private static long cappedMultiply(long left, long right) {
-        long cap = MAX_ESTIMATED_WORK + 1;
+    private static long cappedMultiply(
+            long left,
+            long right,
+            long maximum
+    ) {
+        long cap = maximum == Long.MAX_VALUE
+                ? Long.MAX_VALUE
+                : maximum + 1;
         if (left <= 0 || right <= 0) {
             return 0;
         }
