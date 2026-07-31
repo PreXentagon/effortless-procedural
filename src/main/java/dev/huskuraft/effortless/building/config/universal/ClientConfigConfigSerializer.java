@@ -7,6 +7,7 @@ import dev.huskuraft.effortless.building.config.ClientConfig;
 import dev.huskuraft.effortless.building.config.BuilderConfig;
 import dev.huskuraft.effortless.building.config.ClipboardConfig;
 import dev.huskuraft.effortless.building.config.PatternConfig;
+import dev.huskuraft.effortless.building.config.ProceduralSafetyConfig;
 import dev.huskuraft.effortless.building.config.RenderConfig;
 import dev.huskuraft.universal.api.config.ConfigSerializer;
 import dev.huskuraft.universal.api.nightconfig.core.CommentedConfig;
@@ -20,6 +21,20 @@ public class ClientConfigConfigSerializer implements ConfigSerializer<ClientConf
     //    private static final String KEY_SHOW_OTHER_PLAYERS_BUILD_TOOLTIPS = "showOtherPlayersBuildTooltips";
     private static final String KEY_SHOW_BLOCK_PREVIEW = "showBlockPreview";
     private static final String KEY_MAX_RENDER_VOLUME = "maxRenderVolume";
+    private static final String KEY_PROCEDURAL_SAFETY = "proceduralSafety";
+    private static final String KEY_SHOW_PREPARATION_MESSAGES =
+            "showPreparationMessages";
+    private static final String KEY_ASYNC_PREVIEW_THRESHOLD =
+            "asyncPreviewPositionThreshold";
+    private static final String KEY_MAX_COMPILED_POSITIONS =
+            "maxCompiledPositions";
+    private static final String KEY_MAX_MEMORY_MIB =
+            "maxEstimatedMemoryMiB";
+    private static final String KEY_MAX_PACKET_MIB = "maxPacketMiB";
+    private static final String KEY_MAX_WORK_MILLIONS =
+            "maxEstimatedWorkMillions";
+    private static final String KEY_ROAD_PREVIEW_DISTANCE =
+            "roadPreviewDistance";
 
     private static final String KEY_BUILDER = "builder";
     private static final String KEY_PATTERN = "pattern";
@@ -38,6 +53,51 @@ public class ClientConfigConfigSerializer implements ConfigSerializer<ClientConf
         spec.define(List.of(KEY_RENDER, KEY_SHOW_OTHER_PLAYERS_BUILD), () -> getDefault().renderConfig().showOtherPlayersBuild(), Boolean.class::isInstance);
 //        spec.define(List.of(KEY_RENDER, KEY_SHOW_OTHER_PLAYERS_BUILD_TOOLTIPS), () -> getDefault().renderConfig().showOtherPlayersBuildTooltips(), Boolean.class::isInstance);
         spec.defineInRange(List.of(KEY_RENDER, KEY_MAX_RENDER_VOLUME), getDefault().renderConfig().maxRenderVolume(), RenderConfig.MAX_RENDER_VOLUME_MIN, RenderConfig.MAX_RENDER_VOLUME_MAX);
+        var safety = getDefault().proceduralSafetyConfig();
+        spec.define(
+                List.of(
+                        KEY_PROCEDURAL_SAFETY,
+                        KEY_SHOW_PREPARATION_MESSAGES
+                ),
+                safety::showPreparationMessages,
+                Boolean.class::isInstance
+        );
+        spec.defineInRange(
+                List.of(KEY_PROCEDURAL_SAFETY, KEY_ASYNC_PREVIEW_THRESHOLD),
+                safety.asyncPreviewPositionThreshold(),
+                0,
+                ProceduralSafetyConfig.MAX_COMPILED_POSITIONS_LIMIT
+        );
+        spec.defineInRange(
+                List.of(KEY_PROCEDURAL_SAFETY, KEY_MAX_COMPILED_POSITIONS),
+                safety.maxCompiledPositions(),
+                1,
+                ProceduralSafetyConfig.MAX_COMPILED_POSITIONS_LIMIT
+        );
+        spec.defineInRange(
+                List.of(KEY_PROCEDURAL_SAFETY, KEY_MAX_MEMORY_MIB),
+                safety.maxEstimatedMemoryMiB(),
+                1,
+                ProceduralSafetyConfig.MAX_MEMORY_MIB_LIMIT
+        );
+        spec.defineInRange(
+                List.of(KEY_PROCEDURAL_SAFETY, KEY_MAX_PACKET_MIB),
+                safety.maxPacketMiB(),
+                1,
+                ProceduralSafetyConfig.MAX_PACKET_MIB_LIMIT
+        );
+        spec.defineInRange(
+                List.of(KEY_PROCEDURAL_SAFETY, KEY_MAX_WORK_MILLIONS),
+                safety.maxEstimatedWorkMillions(),
+                1,
+                ProceduralSafetyConfig.MAX_WORK_MILLIONS_LIMIT
+        );
+        spec.defineInRange(
+                List.of(KEY_PROCEDURAL_SAFETY, KEY_ROAD_PREVIEW_DISTANCE),
+                safety.roadPreviewDistance(),
+                1,
+                ProceduralSafetyConfig.MAX_PREVIEW_DISTANCE
+        );
 //        spec.defineInRange(List.of(KEY_RENDER, KEY_MAX_RENDER_DISTANCE), () -> getDefault().renderConfig().maxRenderDistance(), RenderConfig.MIN_MAX_RENDER_DISTANCE, RenderConfig.MAX_MAX_RENDER_DISTANCE);
         spec.defineList(List.of(KEY_PATTERN, KEY_TRANSFORMER_PRESETS), () -> getDefault().patternConfig().transformerPreset().stream().map(TransformerConfigSerializer.INSTANCE::serialize).toList(), Config.class::isInstance);
         spec.defineList(List.of(KEY_CLIPBOARD, KEY_COLLECTIONS), () -> getDefault().clipboardConfig().collections().stream().map(SnapshotConfigSerializer.INSTANCE::serialize).toList(), Config.class::isInstance);
@@ -63,6 +123,36 @@ public class ClientConfigConfigSerializer implements ConfigSerializer<ClientConf
                         config.get(List.of(KEY_RENDER, KEY_MAX_RENDER_VOLUME)),
                         128
                 ),
+                new ProceduralSafetyConfig(
+                        config.get(List.of(
+                                KEY_PROCEDURAL_SAFETY,
+                                KEY_SHOW_PREPARATION_MESSAGES
+                        )),
+                        config.getInt(List.of(
+                                KEY_PROCEDURAL_SAFETY,
+                                KEY_ASYNC_PREVIEW_THRESHOLD
+                        )),
+                        config.getInt(List.of(
+                                KEY_PROCEDURAL_SAFETY,
+                                KEY_MAX_COMPILED_POSITIONS
+                        )),
+                        config.getInt(List.of(
+                                KEY_PROCEDURAL_SAFETY,
+                                KEY_MAX_MEMORY_MIB
+                        )),
+                        config.getInt(List.of(
+                                KEY_PROCEDURAL_SAFETY,
+                                KEY_MAX_PACKET_MIB
+                        )),
+                        config.getInt(List.of(
+                                KEY_PROCEDURAL_SAFETY,
+                                KEY_MAX_WORK_MILLIONS
+                        )),
+                        config.getInt(List.of(
+                                KEY_PROCEDURAL_SAFETY,
+                                KEY_ROAD_PREVIEW_DISTANCE
+                        ))
+                ),
                 new PatternConfig(
                         config.<List<Config>>get(List.of(KEY_PATTERN, KEY_TRANSFORMER_PRESETS)).stream().map(TransformerConfigSerializer.INSTANCE::deserialize).toList()
                 ),
@@ -81,6 +171,38 @@ public class ClientConfigConfigSerializer implements ConfigSerializer<ClientConf
         config.set(List.of(KEY_RENDER, KEY_SHOW_OTHER_PLAYERS_BUILD), settings.renderConfig().showOtherPlayersBuild());
 //        config.set(List.of(KEY_RENDER, KEY_SHOW_OTHER_PLAYERS_BUILD_TOOLTIPS), settings.renderConfig().showOtherPlayersBuildTooltips());
         config.set(List.of(KEY_RENDER, KEY_MAX_RENDER_VOLUME), settings.renderConfig().maxRenderVolume());
+        var safety = settings.proceduralSafetyConfig();
+        config.set(
+                List.of(
+                        KEY_PROCEDURAL_SAFETY,
+                        KEY_SHOW_PREPARATION_MESSAGES
+                ),
+                safety.showPreparationMessages()
+        );
+        config.set(
+                List.of(KEY_PROCEDURAL_SAFETY, KEY_ASYNC_PREVIEW_THRESHOLD),
+                safety.asyncPreviewPositionThreshold()
+        );
+        config.set(
+                List.of(KEY_PROCEDURAL_SAFETY, KEY_MAX_COMPILED_POSITIONS),
+                safety.maxCompiledPositions()
+        );
+        config.set(
+                List.of(KEY_PROCEDURAL_SAFETY, KEY_MAX_MEMORY_MIB),
+                safety.maxEstimatedMemoryMiB()
+        );
+        config.set(
+                List.of(KEY_PROCEDURAL_SAFETY, KEY_MAX_PACKET_MIB),
+                safety.maxPacketMiB()
+        );
+        config.set(
+                List.of(KEY_PROCEDURAL_SAFETY, KEY_MAX_WORK_MILLIONS),
+                safety.maxEstimatedWorkMillions()
+        );
+        config.set(
+                List.of(KEY_PROCEDURAL_SAFETY, KEY_ROAD_PREVIEW_DISTANCE),
+                safety.roadPreviewDistance()
+        );
         config.set(List.of(KEY_PATTERN, KEY_TRANSFORMER_PRESETS), settings.patternConfig().transformerPreset().stream().map(TransformerConfigSerializer.INSTANCE::serialize).filter(Objects::nonNull).toList());
         config.set(List.of(KEY_CLIPBOARD, KEY_COLLECTIONS), settings.clipboardConfig().collections().stream().map(SnapshotConfigSerializer.INSTANCE::serialize).filter(Objects::nonNull).toList());
         config.set(List.of(KEY_BUILDER, KEY_RESERVED_TOOL_DURABILITY), settings.builderConfig().reservedToolDurability());

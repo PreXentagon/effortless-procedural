@@ -267,6 +267,24 @@ final class ProceduralWorkbenchSession {
         return addedIndex[0];
     }
 
+    int addSpecialBlock(String itemId) {
+        var addedIndex = new int[] {0};
+        mutate(() -> {
+            var preset = selectedPreset();
+            var blocks = new ArrayList<>(preset.blocks());
+            for (int index = 0; index < blocks.size(); index++) {
+                if (blocks.get(index).itemId().equals(itemId)) {
+                    addedIndex[0] = index;
+                    return;
+                }
+            }
+            blocks.add(ProceduralBlockEntry.weighted(itemId, 1.0));
+            putSelected(preset.withBlocks(blocks));
+            addedIndex[0] = blocks.size() - 1;
+        });
+        return addedIndex[0];
+    }
+
     int deleteBlock(int index) {
         var result = new int[1];
         mutate(() -> {

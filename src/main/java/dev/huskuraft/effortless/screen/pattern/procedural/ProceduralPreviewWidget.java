@@ -1,9 +1,11 @@
 package dev.huskuraft.effortless.screen.pattern.procedural;
 
 import java.awt.Color;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalDouble;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -14,19 +16,40 @@ import java.util.function.Supplier;
 import dev.huskuraft.effortless.building.Context;
 import dev.huskuraft.effortless.building.structure.BuildMode;
 import dev.huskuraft.effortless.building.structure.builder.Structure;
+import dev.huskuraft.effortless.client.pattern.procedural.CoordinateLookup;
 import dev.huskuraft.effortless.client.pattern.procedural.ExistingNeighborLookup;
+import dev.huskuraft.effortless.client.pattern.procedural.GenerationProgress;
 import dev.huskuraft.effortless.client.pattern.procedural.GenerationRequest;
 import dev.huskuraft.effortless.client.pattern.procedural.GridPosition;
 import dev.huskuraft.effortless.client.pattern.procedural.ProceduralContextCompiler;
 import dev.huskuraft.effortless.client.pattern.procedural.ProceduralGenerator;
+import dev.huskuraft.effortless.client.pattern.procedural.ProceduralMaterial;
 import dev.huskuraft.effortless.client.pattern.procedural.ProceduralPresetAdapter;
+import dev.huskuraft.effortless.client.pattern.procedural.StructuralBlockStateResolver;
+import dev.huskuraft.effortless.client.pattern.procedural.StructuralGeometry;
+import dev.huskuraft.effortless.client.pattern.procedural.StableRandom;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralPatternPreset;
+import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralPatternLibrary;
+import dev.huskuraft.effortless.client.generator.ClientToolSubtype;
+import dev.huskuraft.effortless.client.road.RoadCell;
+import dev.huskuraft.effortless.client.road.RoadPoint;
+import dev.huskuraft.effortless.client.road.RoadProfile;
+import dev.huskuraft.effortless.client.road.SplineMaterialResolver;
+import dev.huskuraft.effortless.client.road.SplineCutoutGeometry;
+import dev.huskuraft.effortless.client.road.RoadVoxelizer;
+import dev.huskuraft.effortless.client.road.SplineSubtype;
+import dev.huskuraft.effortless.client.tree.TreeArchetype;
+import dev.huskuraft.effortless.client.tree.TreeCell;
+import dev.huskuraft.effortless.client.tree.TreeBlockStateResolver;
+import dev.huskuraft.effortless.client.tree.TreeGenerationConfig;
+import dev.huskuraft.effortless.client.tree.TreeMaterialResolver;
+import dev.huskuraft.effortless.client.tree.TreeProfile;
+import dev.huskuraft.effortless.client.tree.TreeVoxelizer;
 import dev.huskuraft.effortless.renderer.opertaion.BlockRenderLayers;
 import dev.huskuraft.universal.api.core.BlockInteraction;
-import dev.huskuraft.universal.api.core.BlockItem;
 import dev.huskuraft.universal.api.core.BlockPosition;
+import dev.huskuraft.universal.api.core.BlockState;
 import dev.huskuraft.universal.api.core.Direction;
-import dev.huskuraft.universal.api.core.Item;
 import dev.huskuraft.universal.api.gui.AbstractWidget;
 import dev.huskuraft.universal.api.math.Vector3f;
 import dev.huskuraft.universal.api.platform.Entrance;
@@ -57,9 +80,11 @@ final class ProceduralPreviewWidget extends AbstractWidget {
             new LinkedHashMap<>(16, 0.75f, true);
 
     private final Supplier<ProceduralPatternPreset> preset;
-    private final Supplier<BuildMode> mode;
+    private final Supplier<ProceduralPatternLibrary> library;
+    private final Supplier<ProceduralPreviewType> type;
     private final Supplier<PreviewOrientation> orientation;
     private final Supplier<Structure> structure;
+    private final Supplier<ClientToolSubtype> clientSubtype;
     private PreviewKey currentKey;
     private PreviewJob currentJob;
     private float panX;
@@ -76,9 +101,11 @@ final class ProceduralPreviewWidget extends AbstractWidget {
             int width,
             int height,
             Supplier<ProceduralPatternPreset> preset,
-            Supplier<BuildMode> mode,
+            Supplier<ProceduralPatternLibrary> library,
+            Supplier<ProceduralPreviewType> type,
             Supplier<PreviewOrientation> orientation,
-            Supplier<Structure> structure
+            Supplier<Structure> structure,
+            Supplier<ClientToolSubtype> clientSubtype
     ) {
         super(
                 entrance,
@@ -89,9 +116,11 @@ final class ProceduralPreviewWidget extends AbstractWidget {
                 Text.translate("effortless.procedural.preview.title")
         );
         this.preset = preset;
-        this.mode = mode;
+        this.library = library;
+        this.type = type;
         this.orientation = orientation;
         this.structure = structure;
+        this.clientSubtype = clientSubtype;
         this.focusable = true;
     }
 
@@ -263,9 +292,13 @@ final class ProceduralPreviewWidget extends AbstractWidget {
     }
 
     private String previewLabel() {
-        return mode.get().getDisplayName().getString()
+        String kind = PreviewOrientation.kind(type.get());
+        if (type.get().isClientOnly()) {
+            kind = clientSubtype.get().getNameText().getString();
+        }
+        return type.get().displayName().getString()
                 + " \u00b7 "
-                + PreviewOrientation.kind(mode.get())
+                + kind
                 + " " + orientation.get().label();
     }
 
@@ -283,13 +316,32 @@ final class ProceduralPreviewWidget extends AbstractWidget {
     }
 
     private void ensureJob() {
-        var resolved = ProceduralContextCompiler.resolvePreviewMaterials(
-                getEntrance().getClient().getPlayer(),
-                preset.get()
+        var player = getEntrance().getClient().getPlayer();
+        var sourceLibrary = library.get();
+        var resolvedPresets = sourceLibrary.presets().stream()
+                .map(value -> ProceduralContextCompiler
+                        .resolvePreviewMaterials(player, value))
+                .toList();
+        var previewLibrary = new ProceduralPatternLibrary(
+                sourceLibrary.enabled(),
+                sourceLibrary.activePresetId(),
+                resolvedPresets,
+                sourceLibrary.fieldAssets()
+        );
+        var resolved = resolvedPresets.stream()
+                .filter(value -> value.id().equals(preset.get().id()))
+                .findFirst()
+                .orElseGet(() -> ProceduralContextCompiler
+                        .resolvePreviewMaterials(player, preset.get()));
+        resolved = applyPreviewSubtype(
+                resolved,
+                type.get(),
+                clientSubtype.get()
         );
         var key = new PreviewKey(
                 resolved,
-                mode.get(),
+                previewLibrary,
+                type.get(),
                 orientation.get(),
                 structure.get()
         );
@@ -298,6 +350,28 @@ final class ProceduralPreviewWidget extends AbstractWidget {
         }
         currentKey = key;
         currentJob = request(key);
+    }
+
+    static ProceduralPatternPreset applyPreviewSubtype(
+            ProceduralPatternPreset value,
+            ProceduralPreviewType previewType,
+            ClientToolSubtype selected
+    ) {
+        if (previewType.isRoad()
+                && selected instanceof SplineSubtype subtype) {
+            return value.withAdvanced(value.advanced().withRoadProfile(
+                    value.advanced().roadProfile()
+                            .withSubtypePreservingGeometry(subtype)
+            ));
+        }
+        if (previewType.isTree()
+                && selected instanceof TreeArchetype archetype) {
+            return value.withAdvanced(value.advanced().withTreeGeneration(
+                    value.advanced().treeGeneration()
+                            .withArchetypePreservingGeometry(archetype)
+            ));
+        }
+        return value;
     }
 
     private static PreviewJob request(PreviewKey key) {
@@ -324,6 +398,35 @@ final class ProceduralPreviewWidget extends AbstractWidget {
 
     private static void generate(PreviewKey key, PreviewJob job) {
         try {
+            var geometry = key.type().isRoad()
+                    ? roadGeometry(key.preset().advanced().roadProfile())
+                    : key.type().isTree()
+                            ? treeGeometry(
+                                    key.preset().advanced().treeGeneration(),
+                                    key.preset().seed()
+                            )
+                            : new PreviewGeometry(
+                            positions(
+                                    key.type(),
+                                    key.orientation(),
+                                    key.structure()
+                            ),
+                            CoordinateLookup.NONE,
+                            Map.of(),
+                            Map.of(),
+                            Map.of(),
+                            Map.of()
+                    );
+            var positions = geometry.positions();
+            job.total.set(positions.size());
+            if (key.type().isTree()) {
+                generateTreeMaterials(key, job, geometry);
+                return;
+            }
+            if (key.type().isRoad()) {
+                generateSplineMaterials(key, job, geometry);
+                return;
+            }
             var adaptation = ProceduralPresetAdapter.adapt(key.preset());
             if (!adaptation.isSuccess()) {
                 job.model = PreviewModel.failure(
@@ -331,12 +434,6 @@ final class ProceduralPreviewWidget extends AbstractWidget {
                 );
                 return;
             }
-            var positions = positions(
-                    key.mode(),
-                    key.orientation(),
-                    key.structure()
-            );
-            job.total.set(positions.size());
             var request = new GenerationRequest<>(
                     key.preset().seed(),
                     positions,
@@ -347,7 +444,8 @@ final class ProceduralPreviewWidget extends AbstractWidget {
                     (stage, completed, total) -> {
                         job.completed.set(completed);
                         job.total.set(total);
-                    }
+                    },
+                    geometry.coordinates()
             );
             var generated = ProceduralGenerator.generate(request);
             if (!generated.isSuccess()) {
@@ -359,13 +457,309 @@ final class ProceduralPreviewWidget extends AbstractWidget {
             job.model = new PreviewModel(
                     generated.placements(),
                     positions,
-                    ""
+                    "",
+                    geometry.treeCells(),
+                    geometry.roadCells()
             );
         } catch (RuntimeException exception) {
             job.model = PreviewModel.failure(
                     exception.getClass().getSimpleName() + ": "
                             + exception.getMessage()
             );
+        }
+    }
+
+    private static void generateTreeMaterials(
+            PreviewKey key,
+            PreviewJob job,
+            PreviewGeometry geometry
+    ) {
+        var roleResolution = TreeMaterialResolver.resolve(
+                key.library(),
+                key.preset()
+        );
+        if (!roleResolution.isSuccess()) {
+            job.model = PreviewModel.failure(
+                    String.join("; ", roleResolution.errors())
+            );
+            return;
+        }
+        var placements = new LinkedHashMap<GridPosition, ProceduralMaterial>();
+        int completedRoles = 0;
+        for (var role : TreeCell.Role.values()) {
+            var rolePositions = geometry.positions().stream()
+                    .filter(position -> geometry.treeRoles().get(position) == role)
+                    .toList();
+            if (rolePositions.isEmpty()) {
+                continue;
+            }
+            var rolePreset = roleResolution.recipes().getOrDefault(
+                    role,
+                    key.preset()
+            );
+            var adaptation = ProceduralPresetAdapter.adapt(rolePreset);
+            if (!adaptation.isSuccess()) {
+                job.model = PreviewModel.failure(
+                        role.name() + ": "
+                                + String.join("; ", adaptation.errors())
+                );
+                return;
+            }
+            int roleOffset = completedRoles;
+            var request = new GenerationRequest<>(
+                    rolePreset.seed(),
+                    rolePositions,
+                    adaptation.ruleSet().orElseThrow(),
+                    ExistingNeighborLookup.NONE,
+                    rolePositions.size(),
+                    job.cancelled::get,
+                    (stage, completed, total) -> job.completed.set(
+                            Math.min(
+                                    geometry.positions().size(),
+                                    roleOffset + completed
+                            )
+                    ),
+                    geometry.coordinates()
+            );
+            var generated = ProceduralGenerator.generate(request);
+            if (!generated.isSuccess()) {
+                job.model = PreviewModel.failure(
+                        role.name() + ": "
+                                + generated.failure().orElseThrow().message()
+                );
+                return;
+            }
+            placements.putAll(generated.placements());
+            completedRoles += rolePositions.size();
+            job.completed.set(completedRoles);
+        }
+        job.model = new PreviewModel(
+                placements,
+                geometry.positions(),
+                "",
+                geometry.treeCells(),
+                geometry.roadCells()
+        );
+    }
+
+    private static void generateSplineMaterials(
+            PreviewKey key,
+            PreviewJob job,
+            PreviewGeometry geometry
+    ) {
+        var roleResolution = SplineMaterialResolver.resolve(
+                key.library(), key.preset()
+        );
+        if (!roleResolution.isSuccess()) {
+            job.model = PreviewModel.failure(
+                    String.join("; ", roleResolution.errors())
+            );
+            return;
+        }
+        var placements = new LinkedHashMap<GridPosition, ProceduralMaterial>();
+        var cells = new LinkedHashMap<>(geometry.roadCells());
+        for (var role : List.of(
+                RoadCell.Role.SURFACE,
+                RoadCell.Role.SHOULDER,
+                RoadCell.Role.CURB,
+                RoadCell.Role.MARKING,
+                RoadCell.Role.FOUNDATION
+        )) {
+            var rolePositions = cells.entrySet().stream()
+                    .filter(entry -> entry.getValue().role() == role)
+                    .map(Map.Entry::getKey)
+                    .toList();
+            var generated = generateSplineRecipe(
+                    roleResolution.recipes().getOrDefault(
+                            role, key.preset()
+                    ),
+                    role.name(), role.name(), rolePositions,
+                    cells, job
+            );
+            if (!generated.isSuccess()) {
+                job.model = PreviewModel.failure(generated.error());
+                return;
+            }
+            placements.putAll(generated.placements());
+        }
+        var bands = key.preset().advanced().roadProfile()
+                .crossSectionBands();
+        for (int index = 0; index < bands.size(); index++) {
+            int bandIndex = index;
+            var positions = cells.entrySet().stream()
+                    .filter(entry -> entry.getValue().role()
+                            == RoadCell.Role.BAND)
+                    .filter(entry -> entry.getValue().bandIndex()
+                            == bandIndex)
+                    .map(Map.Entry::getKey)
+                    .toList();
+            var bandPreset = index < roleResolution.bandRecipes().size()
+                    ? roleResolution.bandRecipes().get(index)
+                    : key.preset();
+            var generated = generateSplineRecipe(
+                    bandPreset,
+                    "BAND " + (index + 1),
+                    "SPLINE_BAND_" + index,
+                    positions, cells, job
+            );
+            if (!generated.isSuccess()) {
+                job.model = PreviewModel.failure(generated.error());
+                return;
+            }
+            placements.putAll(generated.placements());
+        }
+        var selectedCutoutCells = new HashSet<GridPosition>();
+        if (roleResolution.damageRecipe().isPresent()) {
+            var overlayPositions = cells.keySet().stream()
+                    .filter(position -> {
+                        var role = cells.get(position).role();
+                        return role == RoadCell.Role.SURFACE
+                                || role == RoadCell.Role.MARKING;
+                    })
+                    .toList();
+            var damagePreset = roleResolution.damageRecipe().orElseThrow();
+            var generated = generateSplineRecipe(
+                    damagePreset, "DAMAGE", "SPLINE_DAMAGE",
+                    overlayPositions, cells, job
+            );
+            if (!generated.isSuccess()) {
+                job.model = PreviewModel.failure(generated.error());
+                return;
+            }
+            generated.placements().forEach((position, material) -> {
+                if (material.kind() != ProceduralMaterial.Kind.SKIP) {
+                    placements.put(position, material);
+                    if (material.kind()
+                            == ProceduralMaterial.Kind.ERASER) {
+                        selectedCutoutCells.add(position);
+                    }
+                }
+            });
+        }
+
+        var cutout = SplineCutoutGeometry.expand(
+                selectedCutoutCells, cells,
+                key.preset().advanced().roadProfile().cutout()
+        );
+        if (!cutout.isSuccess()) {
+            job.model = PreviewModel.failure(
+                    String.join("; ", cutout.errors())
+            );
+            return;
+        }
+        for (var cell : cutout.airCells()) {
+            cells.put(cell.position(), cell);
+            placements.put(cell.position(), ProceduralMaterial.eraser());
+        }
+        var cutoutRecipes = List.of(
+                new PreviewCutoutRecipe(
+                        cutout.wallCells(),
+                        roleResolution.cutoutWallRecipe()
+                                .orElse(key.preset()),
+                        "CUTOUT WALLS", "SPLINE_CUTOUT_WALL"
+                ),
+                new PreviewCutoutRecipe(
+                        cutout.floorCells(),
+                        roleResolution.cutoutFloorRecipe()
+                                .orElse(key.preset()),
+                        "CUTOUT FLOOR", "SPLINE_CUTOUT_FLOOR"
+                )
+        );
+        for (var recipe : cutoutRecipes) {
+            for (var cell : recipe.cells()) {
+                cells.put(cell.position(), cell);
+            }
+            var positions = recipe.cells().stream()
+                    .map(RoadCell::position)
+                    .toList();
+            var generated = generateSplineRecipe(
+                    recipe.preset(), recipe.label(), recipe.seedSalt(),
+                    positions, cells, job
+            );
+            if (!generated.isSuccess()) {
+                job.model = PreviewModel.failure(generated.error());
+                return;
+            }
+            placements.putAll(generated.placements());
+        }
+        var positions = cells.keySet().stream()
+                .sorted(GridPosition.TRAVERSAL_ORDER)
+                .toList();
+        job.model = new PreviewModel(
+                placements,
+                positions,
+                "",
+                geometry.treeCells(),
+                cells
+        );
+    }
+
+    private static PreviewRecipeResult generateSplineRecipe(
+            ProceduralPatternPreset preset,
+            String label,
+            String seedSalt,
+            List<GridPosition> positions,
+            Map<GridPosition, RoadCell> cells,
+            PreviewJob job
+    ) {
+        if (positions.isEmpty()) {
+            return PreviewRecipeResult.success(Map.of());
+        }
+        var adaptation = ProceduralPresetAdapter.adapt(preset);
+        if (!adaptation.isSuccess()) {
+            return PreviewRecipeResult.failure(
+                    label + ": " + String.join("; ", adaptation.errors())
+            );
+        }
+        long seed = StableRandom.mixSeed(
+                preset.seed(), StableRandom.stableStringHash(seedSalt)
+        );
+        CoordinateLookup coordinates = (coordinate, position) -> {
+            var cell = cells.get(position);
+            return cell == null
+                    ? OptionalDouble.empty()
+                    : cell.geometry().sample(coordinate);
+        };
+        var request = new GenerationRequest<>(
+                seed, positions, adaptation.ruleSet().orElseThrow(),
+                ExistingNeighborLookup.NONE, positions.size(),
+                job.cancelled::get, GenerationProgress.NONE, coordinates
+        );
+        var generated = ProceduralGenerator.generate(request);
+        if (!generated.isSuccess()) {
+            return PreviewRecipeResult.failure(
+                    label + ": "
+                            + generated.failure().orElseThrow().message()
+            );
+        }
+        job.completed.addAndGet(positions.size());
+        return PreviewRecipeResult.success(generated.placements());
+    }
+
+    private record PreviewCutoutRecipe(
+            List<RoadCell> cells,
+            ProceduralPatternPreset preset,
+            String label,
+            String seedSalt
+    ) {
+    }
+
+    private record PreviewRecipeResult(
+            Map<GridPosition, ProceduralMaterial> placements,
+            String error
+    ) {
+        static PreviewRecipeResult success(
+                Map<GridPosition, ProceduralMaterial> placements
+        ) {
+            return new PreviewRecipeResult(Map.copyOf(placements), "");
+        }
+
+        static PreviewRecipeResult failure(String error) {
+            return new PreviewRecipeResult(Map.of(), error);
+        }
+
+        boolean isSuccess() {
+            return error.isEmpty();
         }
     }
 
@@ -410,26 +804,69 @@ final class ProceduralPreviewWidget extends AbstractWidget {
                 -bounds.centerZ()
         );
         var world = getEntrance().getClient().getWorld();
-        var playerPosition = getEntrance().getClient().getPlayer()
-                .getPosition()
-                .toVector3i();
+        // Model tessellation samples ambient occlusion from the supplied
+        // world position before our fixed-light shader sees the vertices.
+        // Sampling beside the player therefore made the GUI preview inherit
+        // cave walls, ceilings, and other nearby occluders. Keep biome tinting
+        // from the real client world, but tessellate in guaranteed empty space
+        // above its build ceiling so the workbench has stable studio lighting.
+        int studioY = world.getMaxBuildHeight() + 64;
+        var occupied = new HashSet<GridPosition>();
+        var rawStates = new LinkedHashMap<GridPosition, BlockState>();
+        var roadGeometries = new LinkedHashMap<
+                GridPosition, StructuralGeometry>();
+        model.roadCells().forEach((position, cell) ->
+                roadGeometries.put(position, cell.geometry()));
+        model.placements().forEach((position, material) -> {
+            if (material.kind() == ProceduralMaterial.Kind.BLOCK) {
+                occupied.add(position);
+                rawStates.put(
+                        position,
+                        material.placeableBlock().orElseThrow()
+                                .getBlock().getDefaultBlockState()
+                );
+            }
+        });
         for (var position : model.positions()) {
             var item = model.placements().get(position);
-            if (!(item instanceof BlockItem blockItem)) {
+            if (item == null
+                    || item.kind() != ProceduralMaterial.Kind.BLOCK) {
                 continue;
             }
+            var blockItem = item.placeableBlock().orElseThrow();
             var blockPosition = new BlockPosition(
                     position.x(),
                     position.y(),
                     position.z()
             );
+            var state = rawStates.get(position);
+            var treeCell = model.treeCells().get(position);
+            if (treeCell != null) {
+                state = TreeBlockStateResolver.resolve(
+                        state, treeCell, occupied,
+                        model.treeCells(), rawStates
+                );
+            } else if (model.roadCells().containsKey(position)) {
+                state = StructuralBlockStateResolver.resolve(
+                        state,
+                        position,
+                        model.roadCells().get(position).geometry(),
+                        occupied,
+                        roadGeometries,
+                        rawStates
+                );
+            }
             renderer.pushPose();
             renderer.translate(position.x(), position.y(), position.z());
             renderer.renderBlockState(
                     BlockRenderLayers.previewBlock(Color.WHITE.getRGB()),
                     world,
-                    blockPosition.add(playerPosition),
-                    blockItem.getBlock().getDefaultBlockState()
+                    new BlockPosition(
+                            blockPosition.x(),
+                            studioY + blockPosition.y(),
+                            blockPosition.z()
+                    ),
+                    state
             );
             renderer.popPose();
         }
@@ -461,10 +898,11 @@ final class ProceduralPreviewWidget extends AbstractWidget {
     }
 
     private static List<GridPosition> positions(
-            BuildMode mode,
+            ProceduralPreviewType type,
             PreviewOrientation orientation,
             Structure structure
     ) {
+        var mode = type.stockMode();
         var anchors = anchors(mode, orientation);
         var context = Context.defaultSet().withStructure(structure);
         for (var anchor : anchors) {
@@ -566,6 +1004,128 @@ final class ProceduralPreviewWidget extends AbstractWidget {
         };
     }
 
+    static PreviewGeometry roadGeometry(RoadProfile profile) {
+        var road = RoadVoxelizer.voxelize(
+                List.of(
+                        new RoadPoint(0.5, 2.5, 0.5),
+                        new RoadPoint(7.5, 2.5, 0.5),
+                        new RoadPoint(13.5, 2.5, 8.5),
+                        new RoadPoint(20.5, 2.5, 8.5)
+                ),
+                profile
+        );
+        if (!road.isSuccess()) {
+            throw new IllegalArgumentException(
+                    String.join("; ", road.errors())
+            );
+        }
+        int minX = road.cells().stream()
+                .mapToInt(cell -> cell.position().x()).min().orElse(0);
+        int minY = road.cells().stream()
+                .mapToInt(cell -> cell.position().y()).min().orElse(0);
+        int minZ = road.cells().stream()
+                .mapToInt(cell -> cell.position().z()).min().orElse(0);
+        var normalizedCells = new LinkedHashMap<GridPosition, RoadCell>();
+        for (var cell : road.cells()) {
+            var source = cell.position();
+            var normalized = new GridPosition(
+                    source.x() - minX,
+                    source.y() - minY,
+                    source.z() - minZ
+            );
+            normalizedCells.put(normalized, new RoadCell(
+                    normalized, cell.role(), cell.geometry(),
+                    cell.bandIndex()
+            ));
+        }
+        CoordinateLookup coordinates = (coordinate, position) -> {
+            var cell = normalizedCells.get(position);
+            if (cell == null) {
+                return OptionalDouble.empty();
+            }
+            return cell.geometry().sample(coordinate);
+        };
+        var roles = new LinkedHashMap<GridPosition, RoadCell.Role>();
+        normalizedCells.forEach((position, cell) ->
+                roles.put(position, cell.role()));
+        return new PreviewGeometry(
+                List.copyOf(normalizedCells.keySet()),
+                coordinates,
+                Map.of(),
+                roles,
+                normalizedCells,
+                Map.of()
+        );
+    }
+
+    static PreviewGeometry treeGeometry(TreeProfile profile) {
+        return treeGeometry(TreeGenerationConfig.legacySkeleton(profile), 0L);
+    }
+
+    static PreviewGeometry treeGeometry(
+            TreeGenerationConfig config,
+            long seed
+    ) {
+        // Show the archetype's natural silhouette. Optional branch guides are
+        // deliberately absent here: displaying four synthetic guides made
+        // every species look like the same squat, four-lobed tree and did not
+        // match a normal base/crown placement in the world.
+        double expectedHeight = (
+                config.minimumHeight() + config.maximumHeight()
+        ) * 0.5;
+        var guides = List.of(
+                new RoadPoint(0.5, 0.5, 0.5),
+                new RoadPoint(0.5, expectedHeight + 0.5, 0.5)
+        );
+        var tree = TreeVoxelizer.generateGuided(
+                guides,
+                config,
+                seed,
+                config.variant(),
+                100_000
+        );
+        if (!tree.isSuccess()) {
+            throw new IllegalArgumentException(
+                    String.join("; ", tree.errors())
+            );
+        }
+        int minX = tree.cells().stream()
+                .mapToInt(cell -> cell.position().x()).min().orElse(0);
+        int minY = tree.cells().stream()
+                .mapToInt(cell -> cell.position().y()).min().orElse(0);
+        int minZ = tree.cells().stream()
+                .mapToInt(cell -> cell.position().z()).min().orElse(0);
+        var normalizedCells = new LinkedHashMap<GridPosition, TreeCell>();
+        var roles = new LinkedHashMap<GridPosition, TreeCell.Role>();
+        for (var cell : tree.cells()) {
+            var source = cell.position();
+            var normalized = new GridPosition(
+                    source.x() - minX,
+                    source.y() - minY,
+                    source.z() - minZ
+            );
+            normalizedCells.put(normalized, new TreeCell(
+                    normalized, cell.role(), cell.geometry()
+            ));
+            roles.put(normalized, cell.role());
+        }
+        CoordinateLookup coordinates = (coordinate, position) -> {
+            var cell = normalizedCells.get(position);
+            if (cell == null) {
+                return OptionalDouble.empty();
+            }
+            return cell.geometry().sample(coordinate);
+        };
+        return new PreviewGeometry(
+                List.copyOf(normalizedCells.keySet()),
+                coordinates,
+                roles,
+                Map.of(),
+                Map.of(),
+                normalizedCells
+        );
+    }
+
     private static BlockInteraction interaction(BlockPosition position) {
         return new BlockInteraction(
                 position.getCenter(),
@@ -624,10 +1184,28 @@ final class ProceduralPreviewWidget extends AbstractWidget {
 
     private record PreviewKey(
             ProceduralPatternPreset preset,
-            BuildMode mode,
+            ProceduralPatternLibrary library,
+            ProceduralPreviewType type,
             PreviewOrientation orientation,
             Structure structure
     ) {
+    }
+
+    record PreviewGeometry(
+            List<GridPosition> positions,
+            CoordinateLookup coordinates,
+            Map<GridPosition, TreeCell.Role> treeRoles,
+            Map<GridPosition, RoadCell.Role> roadRoles,
+            Map<GridPosition, RoadCell> roadCells,
+            Map<GridPosition, TreeCell> treeCells
+    ) {
+        PreviewGeometry {
+            positions = List.copyOf(positions);
+            treeRoles = Map.copyOf(treeRoles);
+            roadRoles = Map.copyOf(roadRoles);
+            roadCells = Map.copyOf(roadCells);
+            treeCells = Map.copyOf(treeCells);
+        }
     }
 
     private static final class PreviewJob {
@@ -639,17 +1217,23 @@ final class ProceduralPreviewWidget extends AbstractWidget {
     }
 
     private record PreviewModel(
-            Map<GridPosition, Item> placements,
+            Map<GridPosition, ProceduralMaterial> placements,
             List<GridPosition> positions,
-            String error
+            String error,
+            Map<GridPosition, TreeCell> treeCells,
+            Map<GridPosition, RoadCell> roadCells
     ) {
         private PreviewModel {
             placements = Map.copyOf(placements);
             positions = List.copyOf(positions);
+            treeCells = Map.copyOf(treeCells);
+            roadCells = Map.copyOf(roadCells);
         }
 
         static PreviewModel failure(String error) {
-            return new PreviewModel(Map.of(), List.of(), error);
+            return new PreviewModel(
+                    Map.of(), List.of(), error, Map.of(), Map.of()
+            );
         }
     }
 

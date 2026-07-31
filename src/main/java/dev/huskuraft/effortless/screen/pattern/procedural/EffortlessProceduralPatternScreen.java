@@ -1,8 +1,10 @@
 package dev.huskuraft.effortless.screen.pattern.procedural;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -17,14 +19,23 @@ import dev.huskuraft.effortless.client.pattern.procedural.GradientCurve;
 import dev.huskuraft.effortless.client.pattern.procedural.GradientDistributionMode;
 import dev.huskuraft.effortless.client.pattern.procedural.MaxRunLengthConstraint;
 import dev.huskuraft.effortless.client.pattern.procedural.NeighborTopology;
+import dev.huskuraft.effortless.client.pattern.procedural.ProceduralMaterial;
 import dev.huskuraft.effortless.client.pattern.procedural.ProceduralRuleSet;
 import dev.huskuraft.effortless.client.pattern.procedural.SeedMode;
 import dev.huskuraft.effortless.client.pattern.procedural.SpatialField;
+import dev.huskuraft.effortless.client.pattern.procedural.StructuralPlacementMode;
 import dev.huskuraft.effortless.client.pattern.procedural.config.PatternMaterialSource;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralAdvancedConfig;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralBlockEntry;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralNoiseConfig;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralPatternPreset;
+import dev.huskuraft.effortless.client.generator.ClientToolSubtype;
+import dev.huskuraft.effortless.client.road.SplineSubtype;
+import dev.huskuraft.effortless.client.road.SplineMaterialLinks;
+import dev.huskuraft.effortless.client.tree.TreeArchetype;
+import dev.huskuraft.effortless.client.tree.TreeGenerationConfig;
+import dev.huskuraft.effortless.client.tree.TreeVariationSource;
+import dev.huskuraft.effortless.client.tree.TreeVariationStrength;
 import dev.huskuraft.effortless.building.pattern.Pattern;
 import dev.huskuraft.effortless.building.pattern.Transformer;
 import dev.huskuraft.effortless.building.pattern.Transformers;
@@ -71,10 +82,12 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
             new ProceduralTooltipDelay();
     private InspectorTab inspectorTab = InspectorTab.MATERIALS;
     private CompactView compactView = CompactView.PALETTE;
-    private BuildMode previewMode = BuildMode.WALL;
+    private ProceduralPreviewType previewType = ProceduralPreviewType.WALL;
     private PreviewOrientation previewOrientation =
-            PreviewOrientation.defaultFor(previewMode);
+            PreviewOrientation.defaultFor(previewType);
     private boolean previewSubtypesExpanded;
+    private SplineSubtype previewSplineSubtype = SplineSubtype.FLAT_ROAD;
+    private TreeArchetype previewTreeArchetype = TreeArchetype.OAK;
     private final EnumMap<
             BuildMode,
             EnumMap<BuildFeatures, BuildFeature>
@@ -136,6 +149,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
         if (session.selectedPreset().stockTransformers().isEmpty()) {
             session.importStockGeometry(stockPattern);
         }
+        syncPreviewSubtypesFromRecipe();
     }
 
     @Override
@@ -281,6 +295,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
             if (!after.equals(before)) {
                 session.select(after);
                 selectedBlockIndex = 0;
+                syncPreviewSubtypesFromRecipe();
                 recreate();
                 return true;
             }
@@ -652,6 +667,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                     session.addPreset();
                     presetSearch = "";
                     selectedBlockIndex = 0;
+                    syncPreviewSubtypesFromRecipe();
                     recreate();
                 }
         );
@@ -664,6 +680,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                     session.duplicateSelected();
                     presetSearch = "";
                     selectedBlockIndex = 0;
+                    syncPreviewSubtypesFromRecipe();
                     recreate();
                 }
         );
@@ -675,6 +692,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 button -> {
                     session.deleteSelected();
                     selectedBlockIndex = 0;
+                    syncPreviewSubtypesFromRecipe();
                     recreate();
                 }
         );
@@ -762,6 +780,8 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
             case NOISE -> addNoiseInspector(innerX, y, innerWidth);
             case RULES -> addRulesInspector(innerX, y, innerWidth);
             case MASKS -> addMasksInspector(innerX, y, innerWidth);
+            case ROAD -> addRoadInspector(innerX, y, innerWidth);
+            case TREE -> addTreeInspector(innerX, y, innerWidth);
             case TRANSFORMS -> addTransformsInspector(
                     innerX,
                     y,
@@ -812,7 +832,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
 
         int paletteHeight = Math.max(
                 48,
-                availableHeight - BUTTON_HEIGHT * 3 - GAP * 3
+                availableHeight - BUTTON_HEIGHT * 4 - GAP * 4
         );
         var palette = addWidget(new ProceduralPaletteWidget(
                 getEntrance(),
@@ -888,6 +908,8 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 )
         );
         y += BUTTON_HEIGHT + GAP;
+        addSpecialMaterialButtons(innerX, y, innerWidth);
+        y += BUTTON_HEIGHT + GAP;
         fallbackButton = addButton(
                 innerX,
                 y,
@@ -912,9 +934,11 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 innerWidth,
                 Math.max(48, availableHeight - selectorHeight - GAP),
                 () -> session.selectedPreset(),
-                () -> previewMode,
+                () -> session.library(),
+                () -> previewType,
                 () -> previewOrientation,
-                this::previewStructure
+                this::previewStructure,
+                this::previewClientSubtype
         ));
     }
 
@@ -987,7 +1011,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
 
         int paletteHeight = clamp(contentHeight / 7, 62, 82);
         int remainingControls = paletteHeight + GAP + BUTTON_HEIGHT + GAP
-                + BUTTON_HEIGHT;
+                + BUTTON_HEIGHT + GAP + BUTTON_HEIGHT;
         int previewHeight = Math.max(
                 72,
                 contentTop + contentHeight - GAP - y - remainingControls
@@ -999,9 +1023,11 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 innerWidth,
                 previewHeight,
                 () -> session.selectedPreset(),
-                () -> previewMode,
+                () -> session.library(),
+                () -> previewType,
                 () -> previewOrientation,
-                this::previewStructure
+                this::previewStructure,
+                this::previewClientSubtype
         ));
         y += previewHeight + GAP;
 
@@ -1079,6 +1105,8 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 )
         );
         y += BUTTON_HEIGHT + GAP;
+        addSpecialMaterialButtons(innerX, y, innerWidth);
+        y += BUTTON_HEIGHT + GAP;
         fallbackButton = addButton(
                 innerX,
                 y,
@@ -1086,6 +1114,30 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 Text.empty(),
                 button -> pickFallback()
         );
+    }
+
+    private void addSpecialMaterialButtons(int x, int y, int width) {
+        int half = (width - GAP) / 2;
+        var skip = addButton(
+                x,
+                y,
+                half,
+                Text.text("Add Skip"),
+                button -> selectedBlockIndex = session.addSpecialBlock(
+                        ProceduralMaterial.SKIP_ID
+                )
+        );
+        skip.setActive(isCustomPalette());
+        var eraser = addButton(
+                x + half + GAP,
+                y,
+                width - half - GAP,
+                Text.text("Add Eraser"),
+                button -> selectedBlockIndex = session.addSpecialBlock(
+                        ProceduralMaterial.ERASER_ID
+                )
+        );
+        eraser.setActive(isCustomPalette());
     }
 
     private int addPreviewToolbar(int x, int y, int width) {
@@ -1097,16 +1149,21 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 x,
                 y,
                 width,
-                () -> previewMode,
+                () -> previewType,
                 value -> {
-                    if (previewMode == value) {
+                    if (previewType == value) {
+                        if (!value.hasSubtypes()) {
+                            previewSubtypesExpanded = false;
+                            recreate();
+                            return;
+                        }
                         previewSubtypesExpanded = !previewSubtypesExpanded;
                         recreate();
                         return;
                     }
-                    previewMode = value;
+                    previewType = value;
                     previewOrientation = PreviewOrientation.defaultFor(value);
-                    previewSubtypesExpanded = true;
+                    previewSubtypesExpanded = value.hasSubtypes();
                     recreate();
                 },
                 () -> previewOrientation,
@@ -1116,12 +1173,33 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 },
                 this::previewStructure,
                 this::setPreviewFeature,
+                this::previewClientSubtype,
+                this::setPreviewClientSubtype,
                 () -> previewSubtypesExpanded
         ));
         return height;
     }
 
+    private ClientToolSubtype previewClientSubtype() {
+        return previewType.isTree()
+                ? previewTreeArchetype
+                : previewSplineSubtype;
+    }
+
+    private void setPreviewClientSubtype(ClientToolSubtype value) {
+        if (value instanceof TreeArchetype archetype) {
+            previewTreeArchetype = archetype;
+        } else if (value instanceof SplineSubtype subtype) {
+            previewSplineSubtype = subtype;
+        }
+        recreate();
+    }
+
     private Structure previewStructure() {
+        if (previewType.isClientOnly()) {
+            return BuildMode.FLOOR.getDefaultStructure();
+        }
+        var previewMode = previewType.stockMode();
         var configured = getEntrance().getConfigStorage()
                 .getStructure(previewMode);
         var result = configured == null
@@ -1140,6 +1218,10 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
     }
 
     private void setPreviewFeature(BuildFeature feature) {
+        if (previewType.isClientOnly()) {
+            return;
+        }
+        var previewMode = previewType.stockMode();
         previewFeatureOverrides.computeIfAbsent(
                 previewMode,
                 ignored -> new EnumMap<>(BuildFeatures.class)
@@ -1262,20 +1344,26 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
         int innerWidth = rightWidth - GAP * 2;
         int y = contentTop + GAP;
         var tabs = InspectorTab.values();
+        int columns = innerWidth < 240
+                ? 4
+                : innerWidth < 420 ? 5 : tabs.length;
+        int rows = (tabs.length + columns - 1) / columns;
         int tabWidth = Math.max(
                 1,
-                (innerWidth - GAP * (tabs.length - 1)) / tabs.length
+                (innerWidth - GAP * (columns - 1)) / columns
         );
         for (int index = 0; index < tabs.length; index++) {
             var tab = tabs[index];
-            int x = innerX + index * (tabWidth + GAP);
-            int width = index == tabs.length - 1
+            int column = index % columns;
+            int row = index / columns;
+            int x = innerX + column * (tabWidth + GAP);
+            int width = column == columns - 1
                     ? innerX + innerWidth - x
                     : tabWidth;
             addWidget(new WorkbenchToolTab(
                     getEntrance(),
                     x,
-                    y,
+                    y + row * (BUTTON_HEIGHT + GAP),
                     width,
                     BUTTON_HEIGHT,
                     Text.text(tab.label),
@@ -1291,7 +1379,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                     }
             ));
         }
-        y += BUTTON_HEIGHT + GAP;
+        y += rows * (BUTTON_HEIGHT + GAP);
 
         switch (inspectorTab) {
             case MATERIALS -> addMaterialsInspector(innerX, y, innerWidth);
@@ -1299,6 +1387,8 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
             case NOISE -> addNoiseInspector(innerX, y, innerWidth);
             case RULES -> addRulesInspector(innerX, y, innerWidth);
             case MASKS -> addMasksInspector(innerX, y, innerWidth);
+            case ROAD -> addRoadInspector(innerX, y, innerWidth);
+            case TREE -> addTreeInspector(innerX, y, innerWidth);
             case TRANSFORMS -> addTransformsInspector(
                     innerX,
                     y,
@@ -2145,6 +2235,33 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 width,
                 contentTop + contentHeight - y - GAP
         );
+        options.addSelectorEntry(
+                Text.translate(
+                        "effortless.procedural.structural_placement"
+                ),
+                Text.translate(
+                        "effortless.procedural.tooltip.structural_placement"
+                ),
+                List.of(
+                        Text.translate(
+                                "effortless.procedural.structural.random"
+                        ),
+                        Text.translate(
+                                "effortless.procedural.structural.smart"
+                        ),
+                        Text.translate(
+                                "effortless.procedural.structural.rule_driven"
+                        )
+                ),
+                List.of(StructuralPlacementMode.values()),
+                preset.advanced().structuralPlacementMode(),
+                value -> session.replaceSelected(current ->
+                        current.withAdvanced(
+                                current.advanced()
+                                        .withStructuralPlacementMode(value)
+                        )
+                )
+        );
         options.addIntegerEntry(
                 Text.text("Retry limit"),
                 Text.empty(),
@@ -2790,6 +2907,506 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
         addAdvancedTab(options);
     }
 
+    private void addRoadInspector(int x, int y, int width) {
+        var profile = session.selectedPreset().advanced().roadProfile();
+        addWidget(new TextWidget(
+                getEntrance(),
+                x,
+                y + 4,
+                Text.text("SPLINE AUTHORING")
+                        .withStyle(ChatFormatting.GOLD)
+        ));
+        y += 18;
+        addWidget(new TextWidget(
+                getEntrance(),
+                x,
+                y + 2,
+                Text.translate("effortless.procedural.road.alt_hint")
+                        .withStyle(ChatFormatting.GRAY)
+        ));
+        y += 18;
+
+        var options = addOptions(
+                x,
+                y,
+                width,
+                contentTop + contentHeight - y - GAP
+        );
+        options.addSection(Text.text("PROFILE"));
+        options.addSelectorEntry(
+                Text.text("Spline subtype"),
+                Text.empty(),
+                splineSubtypeLabels(),
+                List.of(SplineSubtype.values()),
+                profile.subtype(),
+                value -> {
+                    updateRoadProfile(current -> current.withSubtype(value));
+                    recreate();
+                }
+        );
+        options.addSection(Text.text("CROSS-SECTION"));
+        options.addIntegerEntry(
+                Text.text("Road width"),
+                Text.empty(),
+                profile.surfaceWidth(),
+                1,
+                dev.huskuraft.effortless.client.road.RoadProfile
+                        .MAX_SURFACE_WIDTH,
+                value -> updateRoadProfile(current ->
+                        current.withSurfaceWidth(value))
+        );
+        options.addIntegerEntry(
+                Text.text("Road thickness"),
+                Text.empty(),
+                profile.thickness(),
+                1,
+                dev.huskuraft.effortless.client.road.RoadProfile
+                        .MAX_THICKNESS,
+                value -> updateRoadProfile(current ->
+                        current.withThickness(value))
+        );
+        options.addIntegerEntry(
+                Text.text("Shoulder width"),
+                Text.empty(),
+                profile.shoulderWidth(),
+                0,
+                dev.huskuraft.effortless.client.road.RoadProfile
+                        .MAX_SHOULDER_WIDTH,
+                value -> updateRoadProfile(current ->
+                        current.withShoulderWidth(value))
+        );
+        options.addSection(Text.text("CURVE"));
+        options.addRangeEntry(
+                Text.text("Curve tension"),
+                Text.empty(),
+                profile.tension(),
+                0.0,
+                1.0,
+                0.05,
+                value -> updateRoadProfile(current ->
+                        current.withTension(value))
+        );
+        options.addRangeEntry(
+                Text.text("Curve precision"),
+                Text.empty(),
+                profile.sampleSpacing(),
+                dev.huskuraft.effortless.client.road.RoadProfile
+                        .MIN_SAMPLE_SPACING,
+                dev.huskuraft.effortless.client.road.RoadProfile
+                        .MAX_SAMPLE_SPACING,
+                0.05,
+                value -> updateRoadProfile(current ->
+                        current.withSampleSpacing(value))
+        );
+        options.addSection(Text.text("PATTERN COORDINATES"));
+        options.addSwitchEntry(
+                Text.text("Path / lateral / depth"),
+                Text.empty(),
+                true,
+                ignored -> {
+                }
+        ).setActive(false);
+        addSplineRecipeOptions(options, profile);
+    }
+
+    private void addSplineRecipeOptions(
+            ProceduralSettingOptionsList options,
+            dev.huskuraft.effortless.client.road.RoadProfile profile
+    ) {
+        options.addSection(Text.text("MATERIALS"));
+        options.addTab(
+                Text.text("Spline material recipes"),
+                Text.empty(),
+                profile,
+                value -> updateRoadProfile(ignored -> value),
+                (entry, value) -> {
+                    var links = value.materialLinks();
+                    long linked = List.of(
+                            links.surfaceRecipeId(),
+                            links.shoulderRecipeId(),
+                            links.foundationRecipeId(),
+                            links.curbRecipeId(),
+                            links.markingRecipeId(),
+                            links.damageRecipeId()
+                    ).stream().filter(id -> !id.isBlank()).count();
+                    entry.getButton().setMessage(Text.text(
+                            linked + " linked · 6 roles"
+                    ));
+                    entry.getButton().setOnPressListener(button -> {
+                        var roles = new LinkedHashMap<String, String>();
+                        roles.put("Surface", links.surfaceRecipeId());
+                        roles.put("Shoulders", links.shoulderRecipeId());
+                        roles.put("Foundation", links.foundationRecipeId());
+                        roles.put("Curbs", links.curbRecipeId());
+                        roles.put("Markings", links.markingRecipeId());
+                        roles.put("Damage", links.damageRecipeId());
+                        new EffortlessGeneratorRecipesScreen(
+                                getEntrance(),
+                                "Spline material recipes",
+                                session.library(),
+                                session.selectedPresetId(),
+                                roles,
+                                changed -> entry.setItem(
+                                        value.withMaterialLinks(
+                                                new SplineMaterialLinks(
+                                                        changed.getOrDefault(
+                                                                "Surface", ""
+                                                        ),
+                                                        changed.getOrDefault(
+                                                                "Shoulders", ""
+                                                        ),
+                                                        changed.getOrDefault(
+                                                                "Foundation", ""
+                                                        ),
+                                                        changed.getOrDefault(
+                                                                "Curbs", ""
+                                                        ),
+                                                        changed.getOrDefault(
+                                                                "Markings", ""
+                                                        ),
+                                                        changed.getOrDefault(
+                                                                "Damage", ""
+                                                        )
+                                                )
+                                        )
+                                )
+                        ).attach();
+                    });
+                }
+        );
+        options.addTab(
+                Text.translate(
+                        "effortless.procedural.spline.geometry.open"
+                ),
+                Text.translate(
+                        "effortless.procedural.tooltip.spline.geometry.open"
+                ),
+                profile,
+                value -> updateRoadProfile(ignored -> value),
+                (entry, value) -> {
+                    entry.getButton().setMessage(Text.text(
+                            value.crossSectionBands().size() + " bands · "
+                                    + (value.cutout().enabled()
+                                            ? "cutouts on" : "cutouts off")
+                    ));
+                    entry.getButton().setOnPressListener(button ->
+                            new EffortlessSplineGeometryScreen(
+                                    getEntrance(), entry::setItem, value,
+                                    session.library(),
+                                    session.selectedPresetId()
+                            ).attach()
+                    );
+                }
+        );
+    }
+
+    private void updateRoadProfile(
+            java.util.function.UnaryOperator<
+                    dev.huskuraft.effortless.client.road.RoadProfile
+            > updater
+    ) {
+        session.replaceSelected(current -> {
+            var updated = updater.apply(current.advanced().roadProfile());
+            previewSplineSubtype = updated.subtype();
+            return current.withAdvanced(
+                    current.advanced().withRoadProfile(updated)
+            );
+        });
+    }
+
+    private void addTreeInspector(int x, int y, int width) {
+        var tree = session.selectedPreset().advanced().treeGeneration();
+        addWidget(new TextWidget(
+                getEntrance(),
+                x,
+                y + 4,
+                Text.translate("effortless.procedural.tree.title")
+                        .withStyle(ChatFormatting.GOLD)
+        ));
+        y += 18;
+        addWidget(new TextWidget(
+                getEntrance(),
+                x,
+                y + 2,
+                Text.translate("effortless.procedural.tree.alt_hint")
+                        .withStyle(ChatFormatting.GRAY)
+        ));
+        y += 18;
+
+        var options = addOptions(
+                x,
+                y,
+                width,
+                contentTop + contentHeight - y - GAP
+        );
+        options.addSection(Text.translate(
+                "effortless.procedural.tree.section.workflow"
+        ));
+        options.addSelectorEntry(
+                Text.translate("effortless.procedural.tree.archetype"),
+                Text.empty(),
+                treeArchetypeLabels(),
+                List.of(TreeArchetype.values()),
+                tree.archetype(),
+                value -> {
+                    updateTreeGeneration(current ->
+                            current.withArchetype(value));
+                    // An archetype replaces the complete form defaults, not
+                    // just the selected label. Rebuild the inspector so all
+                    // dependent ranges immediately show their new values.
+                    recreate();
+                }
+        );
+
+        options.addSection(Text.translate(
+                "effortless.procedural.tree.section.variation"
+        ));
+        options.addSelectorEntry(
+                Text.translate("effortless.procedural.tree.variation_strength"),
+                Text.empty(),
+                labels(TreeVariationStrength.values()),
+                List.of(TreeVariationStrength.values()),
+                tree.variationStrength(),
+                value -> updateTreeGeneration(current ->
+                        current.withVariationStrength(value))
+        );
+        options.addSelectorEntry(
+                Text.translate("effortless.procedural.tree.variation_source"),
+                Text.empty(),
+                labels(TreeVariationSource.values()),
+                List.of(TreeVariationSource.values()),
+                tree.variationSource(),
+                value -> updateTreeGeneration(current ->
+                        current.withVariationSource(value))
+        );
+        options.addSwitchEntry(
+                Text.translate("effortless.procedural.tree.style_lock"),
+                Text.empty(),
+                tree.styleLock(),
+                value -> updateTreeGeneration(current ->
+                        current.withStyleLock(value))
+        );
+        options.addIntegerEntry(
+                Text.translate("effortless.procedural.tree.variant"),
+                Text.empty(),
+                tree.variant(),
+                0,
+                Integer.MAX_VALUE,
+                value -> updateTreeGeneration(current ->
+                        current.withVariant(value))
+        );
+
+        options.addSection(Text.translate(
+                "effortless.procedural.tree.section.form"
+        ));
+        options.addIntegerEntry(
+                Text.translate("effortless.procedural.tree.minimum_height"),
+                Text.empty(), tree.minimumHeight(), 3,
+                TreeGenerationConfig.MAX_HEIGHT,
+                value -> updateTreeGeneration(current ->
+                        current.withHeightRange(
+                                value,
+                                Math.max(value, current.maximumHeight())
+                        ))
+        );
+        options.addIntegerEntry(
+                Text.translate("effortless.procedural.tree.maximum_height"),
+                Text.empty(), tree.maximumHeight(), 3,
+                TreeGenerationConfig.MAX_HEIGHT,
+                value -> updateTreeGeneration(current ->
+                        current.withHeightRange(
+                                Math.min(current.minimumHeight(), value),
+                                value
+                        ))
+        );
+        options.addIntegerEntry(
+                Text.translate("effortless.procedural.tree.minimum_branches"),
+                Text.empty(), tree.minimumBranches(), 0,
+                TreeGenerationConfig.MAX_BRANCHES,
+                value -> updateTreeGeneration(current ->
+                        current.withBranchRange(
+                                value,
+                                Math.max(value, current.maximumBranches())
+                        ))
+        );
+        options.addIntegerEntry(
+                Text.translate("effortless.procedural.tree.maximum_branches"),
+                Text.empty(), tree.maximumBranches(), 0,
+                TreeGenerationConfig.MAX_BRANCHES,
+                value -> updateTreeGeneration(current ->
+                        current.withBranchRange(
+                                Math.min(current.minimumBranches(), value),
+                                value
+                        ))
+        );
+
+        options.addSection(Text.translate(
+                "effortless.procedural.tree.section.trunk_branches"
+        ));
+        options.addIntegerEntry(
+                Text.translate("effortless.procedural.tree.base_radius"),
+                Text.empty(), tree.baseRadius(), 1,
+                TreeGenerationConfig.MAX_RADIUS,
+                value -> updateTreeGeneration(current -> current.withRadii(
+                        value,
+                        Math.min(value, current.tipRadius()),
+                        current.crownRadius()
+                ))
+        );
+        options.addIntegerEntry(
+                Text.translate("effortless.procedural.tree.tip_radius"),
+                Text.empty(), tree.tipRadius(), 1,
+                TreeGenerationConfig.MAX_RADIUS,
+                value -> updateTreeGeneration(current -> current.withRadii(
+                        current.baseRadius(),
+                        Math.min(value, current.baseRadius()),
+                        current.crownRadius()
+                ))
+        );
+        options.addRangeEntry(
+                Text.translate("effortless.procedural.tree.trunk_bend"),
+                Text.empty(), tree.trunkBend(), 0.0, 2.0, 0.02,
+                value -> updateTreeGeneration(current -> current.withShape(
+                        value, current.branchLengthScale(),
+                        current.branchDroop(), current.crownHeight()
+                ))
+        );
+        options.addRangeEntry(
+                Text.translate("effortless.procedural.tree.branch_length"),
+                Text.empty(), tree.branchLengthScale(), 0.1, 4.0, 0.05,
+                value -> updateTreeGeneration(current -> current.withShape(
+                        current.trunkBend(), value,
+                        current.branchDroop(), current.crownHeight()
+                ))
+        );
+        options.addRangeEntry(
+                Text.translate("effortless.procedural.tree.branch_droop"),
+                Text.empty(), tree.branchDroop(), -1.0, 2.0, 0.05,
+                value -> updateTreeGeneration(current -> current.withShape(
+                        current.trunkBend(), current.branchLengthScale(),
+                        value, current.crownHeight()
+                ))
+        );
+
+        options.addSection(Text.translate(
+                "effortless.procedural.tree.section.foliage"
+        ));
+        options.addIntegerEntry(
+                Text.translate("effortless.procedural.tree.crown_radius"),
+                Text.empty(), tree.crownRadius(), 1,
+                TreeGenerationConfig.MAX_RADIUS,
+                value -> updateTreeGeneration(current -> current.withRadii(
+                        current.baseRadius(), current.tipRadius(), value
+                ))
+        );
+        options.addIntegerEntry(
+                Text.translate("effortless.procedural.tree.crown_height"),
+                Text.empty(), tree.crownHeight(), 1,
+                TreeGenerationConfig.MAX_HEIGHT,
+                value -> updateTreeGeneration(current -> current.withShape(
+                        current.trunkBend(), current.branchLengthScale(),
+                        current.branchDroop(), value
+                ))
+        );
+        options.addRangeEntry(
+                Text.translate("effortless.procedural.tree.foliage_density"),
+                Text.empty(), tree.foliageDensity(), 0.0, 1.0, 0.01,
+                value -> updateTreeGeneration(current -> current.withFoliage(
+                        value, current.foliageNoiseFrequency()
+                ))
+        );
+        options.addRangeEntry(
+                Text.translate("effortless.procedural.tree.foliage_noise"),
+                Text.empty(), tree.foliageNoiseFrequency(), 0.01, 2.0, 0.01,
+                value -> updateTreeGeneration(current -> current.withFoliage(
+                        current.foliageDensity(), value
+                ))
+        );
+
+        options.addSection(Text.translate(
+                "effortless.procedural.tree.section.roots"
+        ));
+        options.addIntegerEntry(
+                Text.translate("effortless.procedural.tree.root_count"),
+                Text.empty(), tree.rootCount(), 0,
+                TreeGenerationConfig.MAX_ROOTS,
+                value -> updateTreeGeneration(current -> current.withRoots(
+                        value, current.rootLengthScale()
+                ))
+        );
+        options.addRangeEntry(
+                Text.translate("effortless.procedural.tree.root_length"),
+                Text.empty(), tree.rootLengthScale(), 0.1, 4.0, 0.05,
+                value -> updateTreeGeneration(current -> current.withRoots(
+                        current.rootCount(), value
+                ))
+        );
+
+        addTreeRecipeOptions(options, tree);
+    }
+
+    private void addTreeRecipeOptions(
+            ProceduralSettingOptionsList options,
+            TreeGenerationConfig tree
+    ) {
+        options.addSection(Text.translate(
+                "effortless.procedural.tree.section.materials"
+        ));
+        options.addTab(
+                Text.text("Tree material recipes"),
+                Text.empty(),
+                tree,
+                value -> updateTreeGeneration(ignored -> value),
+                (entry, value) -> {
+                    long linked = List.of(
+                            value.trunkRecipeId(), value.branchRecipeId(),
+                            value.foliageRecipeId(), value.rootRecipeId()
+                    ).stream().filter(id -> !id.isBlank()).count();
+                    entry.getButton().setMessage(Text.text(
+                            linked + " linked · 4 roles"
+                    ));
+                    entry.getButton().setOnPressListener(button -> {
+                        var roles = new LinkedHashMap<String, String>();
+                        roles.put("Trunk", value.trunkRecipeId());
+                        roles.put("Branches", value.branchRecipeId());
+                        roles.put("Foliage", value.foliageRecipeId());
+                        roles.put("Roots", value.rootRecipeId());
+                        new EffortlessGeneratorRecipesScreen(
+                                getEntrance(),
+                                "Tree material recipes",
+                                session.library(),
+                                session.selectedPresetId(),
+                                roles,
+                                changed -> entry.setItem(value.withRecipes(
+                                        changed.getOrDefault("Trunk", ""),
+                                        changed.getOrDefault("Branches", ""),
+                                        changed.getOrDefault("Foliage", ""),
+                                        changed.getOrDefault("Roots", "")
+                                ))
+                        ).attach();
+                    });
+                }
+        );
+    }
+
+    private void updateTreeGeneration(
+            java.util.function.UnaryOperator<TreeGenerationConfig> updater
+    ) {
+        session.replaceSelected(current -> {
+            var updated = updater.apply(current.advanced().treeGeneration());
+            previewTreeArchetype = updated.archetype();
+            return current.withAdvanced(
+                    current.advanced().withTreeGeneration(updated)
+            );
+        });
+    }
+
+    private void syncPreviewSubtypesFromRecipe() {
+        var advanced = session.selectedPreset().advanced();
+        previewSplineSubtype = advanced.roadProfile().subtype();
+        previewTreeArchetype = advanced.treeGeneration().archetype();
+    }
+
     private void addAdvancedTab(ProceduralSettingOptionsList options) {
         var preset = session.selectedPreset();
         options.addTab(
@@ -3048,6 +3665,17 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
     }
 
     private void pickFallback() {
+        var selected = selectedBlock();
+        if (ProceduralMaterial.isSpecialId(selected.itemId())) {
+            session.replaceSelected(current ->
+                    current.withFallbackItemId(selected.itemId())
+            );
+            message(
+                    "Fallback set to " + shortId(selected.itemId()),
+                    ChatFormatting.GREEN
+            );
+            return;
+        }
         new EffortlessItemPickerScreen(
                 getEntrance(),
                 item -> item instanceof BlockItem
@@ -3255,6 +3883,31 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 .toList();
     }
 
+    private static List<Text> treeArchetypeLabels() {
+        return Arrays.stream(TreeArchetype.values())
+                .map(value -> Text.text(switch (value) {
+                    case GIANT_FANTASY -> "fantasy";
+                    default -> value.name().toLowerCase().replace('_', ' ');
+                }))
+                .toList();
+    }
+
+    private static List<Text> splineSubtypeLabels() {
+        return Arrays.stream(SplineSubtype.values())
+                .map(value -> Text.text(switch (value) {
+                    case PATH -> "path";
+                    case FLAT_ROAD -> "flat";
+                    case CROWNED_ROAD -> "crown";
+                    case BANKED_ROAD -> "bank";
+                    case EMBANKMENT -> "fill";
+                    case TRENCH -> "trench";
+                    case BRIDGE_DECK -> "bridge";
+                    case RAIL_BED -> "rail";
+                    case CUSTOM -> "custom";
+                }))
+                .toList();
+    }
+
     private static List<Text> compactBuildModeLabels() {
         return List.of(
                 Text.text("off"),
@@ -3331,6 +3984,8 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
         NOISE("Noise", "Noise", "noise", 0xFF84709D),
         RULES("Rules", "Rules", "rules", 0xFFA66F6F),
         MASKS("Masks", "Masks", "masks", 0xFF61978E),
+        ROAD("Spline", "Splines", "road", 0xFF7796A0),
+        TREE("Tree", "Trees", "tree", 0xFF669369),
         TRANSFORMS("Geo", "Geometry", "geometry", 0xFF738E70),
         OUTPUT("Out", "Output", "output", 0xFF858B92);
 
@@ -3356,6 +4011,8 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
         NOISE("Noise", "Noise", "noise", 0xFF84709D),
         RULES("Rules", "Rules", "rules", 0xFFA66F6F),
         MASKS("Masks", "Masks", "masks", 0xFF61978E),
+        ROAD("Spline", "Splines", "road", 0xFF7796A0),
+        TREE("Tree", "Trees", "tree", 0xFF669369),
         TRANSFORMS("Geo", "Geometry", "geometry", 0xFF738E70),
         OUTPUT("Out", "Output", "output", 0xFF858B92);
 

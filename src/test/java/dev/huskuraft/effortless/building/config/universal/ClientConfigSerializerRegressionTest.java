@@ -14,6 +14,7 @@ import dev.huskuraft.effortless.building.config.BuilderConfig;
 import dev.huskuraft.effortless.building.config.ClientConfig;
 import dev.huskuraft.effortless.building.config.ClipboardConfig;
 import dev.huskuraft.effortless.building.config.PatternConfig;
+import dev.huskuraft.effortless.building.config.ProceduralSafetyConfig;
 import dev.huskuraft.effortless.building.config.RenderConfig;
 import dev.huskuraft.effortless.building.pattern.array.ArrayTransformer;
 import dev.huskuraft.effortless.building.pattern.mirror.MirrorTransformer;
@@ -67,6 +68,15 @@ class ClientConfigSerializerRegressionTest {
         var original = new ClientConfig(
                 new BuilderConfig(7, false),
                 new RenderConfig(true, false, false, 2048, 128),
+                new ProceduralSafetyConfig(
+                        false,
+                        8_000,
+                        400_000,
+                        256,
+                        12,
+                        900,
+                        96
+                ),
                 new PatternConfig(List.of(array, mirror, radial, randomizer)),
                 ClipboardConfig.DEFAULT,
                 ClientConfig.DEFAULT.structureMap()
@@ -76,6 +86,10 @@ class ClientConfigSerializerRegressionTest {
         var restored = serializer.deserialize(serializer.serialize(original));
 
         assertEquals(7, restored.builderConfig().reservedToolDurability());
+        assertEquals(
+                original.proceduralSafetyConfig(),
+                restored.proceduralSafetyConfig()
+        );
         assertEquals(4, restored.patternConfig().transformerPreset().size());
         assertInstanceOf(ArrayTransformer.class, restored.patternConfig().transformerPreset().get(0));
         assertInstanceOf(MirrorTransformer.class, restored.patternConfig().transformerPreset().get(1));

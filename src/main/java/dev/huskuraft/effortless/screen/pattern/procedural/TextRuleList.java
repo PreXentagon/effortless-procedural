@@ -1,6 +1,7 @@
 package dev.huskuraft.effortless.screen.pattern.procedural;
 
 import java.util.function.Function;
+import java.util.function.Predicate;
 
 import dev.huskuraft.universal.api.gui.container.EditableEntryList;
 import dev.huskuraft.universal.api.gui.text.TextWidget;
@@ -32,6 +33,16 @@ final class TextRuleList<T> extends ProceduralEntryList<T> {
             var entry = children().get(index);
             setSelected(entry);
             ensureVisible(entry);
+        }
+    }
+
+    void selectFirst(Predicate<T> predicate) {
+        for (var entry : children()) {
+            if (predicate.test(entry.getItem())) {
+                setSelected(entry);
+                ensureVisible(entry);
+                return;
+            }
         }
     }
 

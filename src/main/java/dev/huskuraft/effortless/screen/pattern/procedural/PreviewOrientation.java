@@ -2,8 +2,6 @@ package dev.huskuraft.effortless.screen.pattern.procedural;
 
 import java.util.List;
 
-import dev.huskuraft.effortless.building.structure.BuildMode;
-
 /**
  * Explicit synthetic placement orientation used by the workbench preview.
  *
@@ -30,18 +28,24 @@ enum PreviewOrientation {
         return label;
     }
 
-    static PreviewOrientation defaultFor(BuildMode mode) {
-        return choices(mode).get(0);
+    static PreviewOrientation defaultFor(ProceduralPreviewType type) {
+        return choices(type).get(0);
     }
 
-    static PreviewOrientation next(BuildMode mode, PreviewOrientation current) {
-        var choices = choices(mode);
+    static PreviewOrientation next(
+            ProceduralPreviewType type,
+            PreviewOrientation current
+    ) {
+        var choices = choices(type);
         int index = choices.indexOf(current);
         return choices.get((Math.max(0, index) + 1) % choices.size());
     }
 
-    static List<PreviewOrientation> choices(BuildMode mode) {
-        return switch (mode) {
+    static List<PreviewOrientation> choices(ProceduralPreviewType type) {
+        if (type.isClientOnly()) {
+            return type.isRoad() ? List.of(XZ) : List.of(XYZ);
+        }
+        return switch (type.stockMode()) {
             case SINGLE -> List.of(XYZ);
             case LINE -> List.of(X, Y, Z);
             case WALL -> List.of(YZ, XY);
@@ -56,8 +60,11 @@ enum PreviewOrientation {
         };
     }
 
-    static String kind(BuildMode mode) {
-        return switch (mode) {
+    static String kind(ProceduralPreviewType type) {
+        if (type.isClientOnly()) {
+            return type.isRoad() ? "Path" : "Skeleton";
+        }
+        return switch (type.stockMode()) {
             case LINE -> "Axis";
             case WALL, FLOOR, CIRCLE -> "Plane";
             case CYLINDER -> "Axis";

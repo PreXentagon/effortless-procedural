@@ -11,7 +11,8 @@ public record GenerationRequest<T>(
         ExistingNeighborLookup existingNeighbors,
         int maximumPositions,
         BooleanSupplier cancelled,
-        GenerationProgress progress
+        GenerationProgress progress,
+        CoordinateLookup coordinateLookup
 ) {
 
     public static final int DEFAULT_MAXIMUM_POSITIONS = 1_000_000;
@@ -22,6 +23,7 @@ public record GenerationRequest<T>(
         Objects.requireNonNull(existingNeighbors, "Existing neighbor lookup");
         Objects.requireNonNull(cancelled, "Cancellation supplier");
         Objects.requireNonNull(progress, "Progress listener");
+        Objects.requireNonNull(coordinateLookup, "Coordinate lookup");
         if (maximumPositions < 1) {
             throw new IllegalArgumentException("Maximum position count must be positive");
         }
@@ -42,7 +44,29 @@ public record GenerationRequest<T>(
                 existingNeighbors,
                 maximumPositions,
                 cancelled,
-                GenerationProgress.NONE
+                GenerationProgress.NONE,
+                CoordinateLookup.NONE
+        );
+    }
+
+    public GenerationRequest(
+            long seed,
+            Collection<GridPosition> positions,
+            ProceduralRuleSet<T> ruleSet,
+            ExistingNeighborLookup existingNeighbors,
+            int maximumPositions,
+            BooleanSupplier cancelled,
+            GenerationProgress progress
+    ) {
+        this(
+                seed,
+                positions,
+                ruleSet,
+                existingNeighbors,
+                maximumPositions,
+                cancelled,
+                progress,
+                CoordinateLookup.NONE
         );
     }
 
@@ -58,7 +82,8 @@ public record GenerationRequest<T>(
                 ExistingNeighborLookup.NONE,
                 DEFAULT_MAXIMUM_POSITIONS,
                 () -> false,
-                GenerationProgress.NONE
+                GenerationProgress.NONE,
+                CoordinateLookup.NONE
         );
     }
 }

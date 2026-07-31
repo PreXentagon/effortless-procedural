@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -16,12 +17,21 @@ import dev.huskuraft.effortless.networking.packets.AllPacketListener;
 import dev.huskuraft.effortless.networking.packets.player.PlayerBuildPacket;
 import dev.huskuraft.effortless.networking.serializer.ContextSerializer;
 import dev.huskuraft.effortless.networking.serializer.TransformerSerializer;
+import dev.huskuraft.effortless.building.structure.BuildMode;
 
 class ServerCompatibilityBoundaryTest {
 
     @Test
     void protocolVersionRemainsThirteen() {
         assertEquals(13, Effortless.PROTOCOL_VERSION);
+    }
+
+    @Test
+    void clientAuthoringShapesDoNotExtendServerSerializedBuildModeEnum() {
+        assertFalse(Arrays.stream(BuildMode.values())
+                .anyMatch(mode -> mode.name().equals("ROAD")));
+        assertFalse(Arrays.stream(BuildMode.values())
+                .anyMatch(mode -> mode.name().equals("TREE")));
     }
 
     @Test
@@ -42,6 +52,14 @@ class ServerCompatibilityBoundaryTest {
             assertFalse(
                     bytecode.contains("ProceduralRule"),
                     type.getName() + " must not serialize procedural rules"
+            );
+            assertFalse(
+                    bytecode.contains("client/road"),
+                    type.getName() + " must not reference client road classes"
+            );
+            assertFalse(
+                    bytecode.contains("client/tree"),
+                    type.getName() + " must not reference client tree classes"
             );
         }
     }

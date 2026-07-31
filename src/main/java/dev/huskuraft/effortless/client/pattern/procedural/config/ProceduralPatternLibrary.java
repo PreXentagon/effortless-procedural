@@ -61,10 +61,16 @@ public record ProceduralPatternLibrary(
     }
 
     public PresetResolution resolvedActivePreset() {
-        var active = activePreset();
+        return resolvedPreset(activePresetId);
+    }
+
+    public PresetResolution resolvedPreset(UUID presetId) {
+        var active = presets.stream()
+                .filter(preset -> preset.id().equals(presetId))
+                .findFirst();
         if (active.isEmpty()) {
             return PresetResolution.failure(
-                    "Active procedural preset '" + activePresetId + "' was not found"
+                    "Procedural preset '" + presetId + "' was not found"
             );
         }
         try {

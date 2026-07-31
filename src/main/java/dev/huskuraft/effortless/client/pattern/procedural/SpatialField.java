@@ -200,20 +200,9 @@ public record SpatialField(
     }
 
     private double linear(GenerationContext<?> context, double rotatedPrimary) {
-        if (coordinate == Coordinate.TRAVERSAL) {
+        if (coordinate.isScalar()) {
             return clamp01(
                     centered(coordinate.sample(context), centerX, scaleX) + 0.5
-            );
-        }
-        if (coordinate == Coordinate.DISTANCE) {
-            return clamp01(
-                    centered(
-                            context.bounds().normalizedDistance(
-                                    context.position()
-                            ),
-                            centerX,
-                            scaleX
-                    ) + 0.5
             );
         }
         return clamp01(rotatedPrimary + 0.5);
@@ -305,7 +294,8 @@ public record SpatialField(
             case X -> x;
             case Y -> y;
             case Z -> z;
-            case DISTANCE, TRAVERSAL -> x;
+            case DISTANCE, TRAVERSAL, PATH, LATERAL, DEPTH,
+                    THICKNESS, SLOPE, TIP, JUNCTION -> x;
         };
     }
 
@@ -320,7 +310,8 @@ public record SpatialField(
             case X -> bounds.minY() != bounds.maxY() ? y : z;
             case Y -> bounds.minX() != bounds.maxX() ? x : z;
             case Z -> bounds.minY() != bounds.maxY() ? y : x;
-            case DISTANCE, TRAVERSAL ->
+            case DISTANCE, TRAVERSAL, PATH, LATERAL, DEPTH,
+                    THICKNESS, SLOPE, TIP, JUNCTION ->
                     bounds.minY() != bounds.maxY() ? y : z;
         };
     }

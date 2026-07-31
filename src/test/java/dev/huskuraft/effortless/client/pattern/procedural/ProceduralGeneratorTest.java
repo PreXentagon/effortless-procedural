@@ -652,6 +652,34 @@ class ProceduralGeneratorTest {
     }
 
     @Test
+    void callerCanRaiseExecutionWorkBudgetWithoutChangingRules() {
+        var configuredRules = rules(
+                List.of(A, B),
+                List.of(new WeightedSource<>(
+                        Map.of("a", 1.0, "b", 1.0)
+                )),
+                List.of(),
+                2,
+                Optional.of("a")
+        );
+        var request = GenerationRequest.create(
+                12L,
+                line(20),
+                configuredRules
+        );
+
+        var rejected = ProceduralGenerator.generate(request, 1L);
+        var accepted = ProceduralGenerator.generate(request, 10_000L);
+
+        assertFalse(rejected.isSuccess());
+        assertEquals(
+                GenerationResult.GenerationFailure.Code.TOO_EXPENSIVE,
+                rejected.failure().orElseThrow().code()
+        );
+        assertTrue(accepted.isSuccess());
+    }
+
+    @Test
     void futureTargetsDoNotLeakExistingWorldState() {
         var generated = new HashMap<GridPosition, Candidate<String>>();
         var current = new GridPosition(0, 0, 0);

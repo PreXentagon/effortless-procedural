@@ -243,7 +243,14 @@ public final class MaskedWeightSource<T> implements WeightSource<T> {
     }
 
     private double bandPhase(GenerationContext<T> context) {
-        if (!worldAnchored || coordinate == Coordinate.TRAVERSAL) {
+        if (!worldAnchored || coordinate == Coordinate.TRAVERSAL
+                || coordinate == Coordinate.PATH
+                || coordinate == Coordinate.LATERAL
+                || coordinate == Coordinate.DEPTH
+                || coordinate == Coordinate.THICKNESS
+                || coordinate == Coordinate.SLOPE
+                || coordinate == Coordinate.TIP
+                || coordinate == Coordinate.JUNCTION) {
             return fraction(coordinate.sample(context) * period);
         }
         double raw = switch (coordinate) {
@@ -253,6 +260,10 @@ public final class MaskedWeightSource<T> implements WeightSource<T> {
             case DISTANCE -> worldDistance(context.position());
             case TRAVERSAL -> throw new IllegalStateException(
                     "Traversal is handled before raw world sampling"
+            );
+            case PATH, LATERAL, DEPTH, THICKNESS, SLOPE, TIP, JUNCTION ->
+                    throw new IllegalStateException(
+                    "Generator-local coordinates are handled before raw world sampling"
             );
         };
         return fraction(raw / period);

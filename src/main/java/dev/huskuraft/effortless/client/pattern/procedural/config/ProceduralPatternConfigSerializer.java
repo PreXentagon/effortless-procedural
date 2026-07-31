@@ -19,6 +19,18 @@ import dev.huskuraft.effortless.client.pattern.procedural.NeighborTopology;
 import dev.huskuraft.effortless.client.pattern.procedural.ProceduralRuleSet;
 import dev.huskuraft.effortless.client.pattern.procedural.SeedMode;
 import dev.huskuraft.effortless.client.pattern.procedural.SpatialField;
+import dev.huskuraft.effortless.client.pattern.procedural.StructuralPlacementMode;
+import dev.huskuraft.effortless.client.road.RoadProfile;
+import dev.huskuraft.effortless.client.road.SplineCrossSectionBand;
+import dev.huskuraft.effortless.client.road.SplineCutoutConfig;
+import dev.huskuraft.effortless.client.road.SplineSubtype;
+import dev.huskuraft.effortless.client.road.SplineMaterialLinks;
+import dev.huskuraft.effortless.client.tree.TreeArchetype;
+import dev.huskuraft.effortless.client.tree.TreeGenerationConfig;
+import dev.huskuraft.effortless.client.tree.TreeMode;
+import dev.huskuraft.effortless.client.tree.TreeProfile;
+import dev.huskuraft.effortless.client.tree.TreeVariationSource;
+import dev.huskuraft.effortless.client.tree.TreeVariationStrength;
 import dev.huskuraft.universal.api.config.ConfigSerializer;
 import dev.huskuraft.universal.api.nightconfig.core.CommentedConfig;
 import dev.huskuraft.universal.api.nightconfig.core.Config;
@@ -31,7 +43,7 @@ import dev.huskuraft.universal.api.nightconfig.core.ConfigSpec;
 public final class ProceduralPatternConfigSerializer
         implements ConfigSerializer<ProceduralPatternLibrary> {
 
-    public static final int FORMAT_VERSION = 4;
+    public static final int FORMAT_VERSION = 10;
 
     private static final String KEY_FORMAT_VERSION = "formatVersion";
     private static final String KEY_ENABLED = "enabled";
@@ -157,12 +169,18 @@ public final class ProceduralPatternConfigSerializer
         Config originalAdvanced = config.get("advanced");
         boolean hadGradientField = originalAdvanced != null
                 && originalAdvanced.contains("gradientField");
+        boolean hadTreeGeneration = originalAdvanced != null
+                && originalAdvanced.contains("treeGeneration");
         presetSpec(ProceduralPatternPreset.DEFAULT).correct(config);
         Coordinate gradientCoordinate = Coordinate.valueOf(
                 config.<String>get("gradientCoordinate")
                         .toUpperCase(Locale.ROOT)
         );
-        var advanced = deserializeAdvanced(config.get("advanced"));
+        var advanced = deserializeAdvanced(
+                config.get("advanced"),
+                originalAdvanced != null,
+                hadTreeGeneration
+        );
         if (!hadGradientField) {
             advanced = advanced.withGradientField(
                     SpatialField.linear(gradientCoordinate)
@@ -322,6 +340,19 @@ public final class ProceduralPatternConfigSerializer
                 "noiseFieldAssetId",
                 advanced.noiseFieldAssetId()
         );
+        config.set("roadProfile", serializeRoadProfile(
+                advanced.roadProfile()
+        ));
+        config.set("treeProfile", serializeTreeProfile(
+                advanced.treeProfile()
+        ));
+        config.set("treeGeneration", serializeTreeGeneration(
+                advanced.treeGeneration()
+        ));
+        config.set(
+                "structuralPlacementMode",
+                enumName(advanced.structuralPlacementMode())
+        );
         config.set(
                 "maskLayers",
                 advanced.maskLayers().stream().map(this::serializeMaskLayer).toList()
@@ -358,8 +389,17 @@ public final class ProceduralPatternConfigSerializer
         return config;
     }
 
-    private ProceduralAdvancedConfig deserializeAdvanced(Config config) {
+    private ProceduralAdvancedConfig deserializeAdvanced(
+            Config config,
+            boolean hadAdvanced,
+            boolean hadTreeGeneration
+    ) {
         advancedSpec(ProceduralAdvancedConfig.DEFAULT).correct(config);
+        var treeGeneration = hadTreeGeneration
+                ? deserializeTreeGeneration(config.get("treeGeneration"))
+                : hadAdvanced ? TreeGenerationConfig.legacySkeleton(
+                        deserializeTreeProfile(config.get("treeProfile"))
+                ) : TreeGenerationConfig.DEFAULT;
         return new ProceduralAdvancedConfig(
                 config.getInt("repairPasses"),
                 parseEnum(config, "adjacencyTopology", NeighborTopology.class),
@@ -397,7 +437,14 @@ public final class ProceduralPatternConfigSerializer
                 deserializeSpatialField(config.get("gradientField")),
                 deserializeNoiseConfig(config.get("noiseConfig")),
                 config.get("gradientFieldAssetId"),
-                config.get("noiseFieldAssetId")
+                config.get("noiseFieldAssetId"),
+                deserializeRoadProfile(config.get("roadProfile")),
+                treeGeneration,
+                parseEnum(
+                        config,
+                        "structuralPlacementMode",
+                        StructuralPlacementMode.class
+                )
         );
     }
 
@@ -438,6 +485,26 @@ public final class ProceduralPatternConfigSerializer
                 "noiseFieldAssetId",
                 defaults.noiseFieldAssetId(),
                 ProceduralPatternConfigSerializer::isBlankOrUuid
+        );
+        spec.define(
+                "roadProfile",
+                serializeRoadProfile(defaults.roadProfile()),
+                Config.class::isInstance
+        );
+        spec.define(
+                "treeProfile",
+                serializeTreeProfile(defaults.treeProfile()),
+                Config.class::isInstance
+        );
+        spec.define(
+                "treeGeneration",
+                serializeTreeGeneration(defaults.treeGeneration()),
+                Config.class::isInstance
+        );
+        defineEnum(
+                spec,
+                "structuralPlacementMode",
+                defaults.structuralPlacementMode()
         );
         spec.defineList(
                 "maskLayers",
@@ -979,6 +1046,458 @@ public final class ProceduralPatternConfigSerializer
         );
         spec.defineInRange("minimumMatches", defaults.minimumMatches(), 0, 26);
         spec.defineInRange("maximumMatches", defaults.maximumMatches(), 0, 26);
+        return spec;
+    }
+
+    private Config serializeRoadProfile(RoadProfile profile) {
+        var config = Config.inMemory();
+        config.set("surfaceWidth", profile.surfaceWidth());
+        config.set("thickness", profile.thickness());
+        config.set("shoulderWidth", profile.shoulderWidth());
+        config.set("tension", profile.tension());
+        config.set("sampleSpacing", profile.sampleSpacing());
+        config.set("subtype", enumName(profile.subtype()));
+        config.set("surfaceRecipeId", profile.materialLinks().surfaceRecipeId());
+        config.set("shoulderRecipeId", profile.materialLinks().shoulderRecipeId());
+        config.set("foundationRecipeId", profile.materialLinks().foundationRecipeId());
+        config.set("curbRecipeId", profile.materialLinks().curbRecipeId());
+        config.set("markingRecipeId", profile.materialLinks().markingRecipeId());
+        config.set("damageRecipeId", profile.materialLinks().damageRecipeId());
+        config.set(
+                "crossSectionBands",
+                profile.crossSectionBands().stream()
+                        .map(this::serializeCrossSectionBand)
+                        .toList()
+        );
+        config.set("cutout", serializeCutout(profile.cutout()));
+        roadProfileSpec(profile).correct(config);
+        return config;
+    }
+
+    private RoadProfile deserializeRoadProfile(Config config) {
+        var hadSubtype = config.contains("subtype");
+        roadProfileSpec(RoadProfile.DEFAULT).correct(config);
+        return new RoadProfile(
+                config.getInt("surfaceWidth"),
+                config.getInt("thickness"),
+                config.getInt("shoulderWidth"),
+                number(config, "tension"),
+                number(config, "sampleSpacing"),
+                hadSubtype
+                        ? parseEnum(config, "subtype", SplineSubtype.class)
+                        : SplineSubtype.CUSTOM,
+                new SplineMaterialLinks(
+                        config.get("surfaceRecipeId"),
+                        config.get("shoulderRecipeId"),
+                        config.get("foundationRecipeId"),
+                        config.get("curbRecipeId"),
+                        config.get("markingRecipeId"),
+                        config.get("damageRecipeId")
+                ),
+                config.<List<Config>>get("crossSectionBands").stream()
+                        .map(this::deserializeCrossSectionBand)
+                        .toList(),
+                deserializeCutout(config.get("cutout"))
+        );
+    }
+
+    private ConfigSpec roadProfileSpec(RoadProfile defaults) {
+        var spec = new ConfigSpec();
+        spec.defineInRange(
+                "surfaceWidth",
+                defaults.surfaceWidth(),
+                1,
+                RoadProfile.MAX_SURFACE_WIDTH
+        );
+        spec.defineInRange(
+                "thickness",
+                defaults.thickness(),
+                1,
+                RoadProfile.MAX_THICKNESS
+        );
+        spec.defineInRange(
+                "shoulderWidth",
+                defaults.shoulderWidth(),
+                0,
+                RoadProfile.MAX_SHOULDER_WIDTH
+        );
+        spec.defineInRange("tension", defaults.tension(), 0.0, 1.0);
+        spec.defineInRange(
+                "sampleSpacing",
+                defaults.sampleSpacing(),
+                RoadProfile.MIN_SAMPLE_SPACING,
+                RoadProfile.MAX_SAMPLE_SPACING
+        );
+        defineEnum(spec, "subtype", defaults.subtype());
+        var links = defaults.materialLinks();
+        spec.define(
+                "surfaceRecipeId", links.surfaceRecipeId(),
+                value -> value instanceof String
+        );
+        spec.define(
+                "shoulderRecipeId", links.shoulderRecipeId(),
+                value -> value instanceof String
+        );
+        spec.define(
+                "foundationRecipeId", links.foundationRecipeId(),
+                value -> value instanceof String
+        );
+        spec.define(
+                "curbRecipeId", links.curbRecipeId(),
+                value -> value instanceof String
+        );
+        spec.define(
+                "markingRecipeId", links.markingRecipeId(),
+                value -> value instanceof String
+        );
+        spec.define(
+                "damageRecipeId", links.damageRecipeId(),
+                value -> value instanceof String
+        );
+        spec.defineList(
+                "crossSectionBands",
+                () -> defaults.crossSectionBands().stream()
+                        .map(this::serializeCrossSectionBand)
+                        .toList(),
+                Config.class::isInstance
+        );
+        spec.define(
+                "cutout",
+                serializeCutout(defaults.cutout()),
+                Config.class::isInstance
+        );
+        return spec;
+    }
+
+    private Config serializeCrossSectionBand(
+            SplineCrossSectionBand band
+    ) {
+        var config = Config.inMemory();
+        config.set("name", band.name());
+        config.set("width", band.width());
+        config.set("heightOffset", band.heightOffset());
+        config.set("depth", band.depth());
+        config.set("side", enumName(band.side()));
+        config.set("placement", enumName(band.placement()));
+        config.set("recipeId", band.recipeId());
+        crossSectionBandSpec(band).correct(config);
+        return config;
+    }
+
+    private SplineCrossSectionBand deserializeCrossSectionBand(
+            Config config
+    ) {
+        crossSectionBandSpec(SplineCrossSectionBand.DEFAULT).correct(config);
+        return new SplineCrossSectionBand(
+                config.get("name"),
+                config.getInt("width"),
+                config.getInt("heightOffset"),
+                config.getInt("depth"),
+                parseEnum(config, "side", SplineCrossSectionBand.Side.class),
+                parseEnum(
+                        config, "placement",
+                        SplineCrossSectionBand.Placement.class
+                ),
+                config.get("recipeId")
+        );
+    }
+
+    private ConfigSpec crossSectionBandSpec(
+            SplineCrossSectionBand defaults
+    ) {
+        var spec = new ConfigSpec();
+        spec.define(
+                "name", defaults.name(),
+                ProceduralPatternConfigSerializer::isNonBlankString
+        );
+        spec.defineInRange(
+                "width", defaults.width(), 1,
+                SplineCrossSectionBand.MAX_WIDTH
+        );
+        spec.defineInRange(
+                "heightOffset", defaults.heightOffset(),
+                -SplineCrossSectionBand.MAX_HEIGHT_OFFSET,
+                SplineCrossSectionBand.MAX_HEIGHT_OFFSET
+        );
+        spec.defineInRange(
+                "depth", defaults.depth(), 1,
+                SplineCrossSectionBand.MAX_DEPTH
+        );
+        defineEnum(spec, "side", defaults.side());
+        defineEnum(spec, "placement", defaults.placement());
+        spec.define(
+                "recipeId", defaults.recipeId(),
+                value -> value instanceof String
+        );
+        return spec;
+    }
+
+    private Config serializeCutout(SplineCutoutConfig cutout) {
+        var config = Config.inMemory();
+        config.set("enabled", cutout.enabled());
+        config.set("depth", cutout.depth());
+        config.set("wallThickness", cutout.wallThickness());
+        config.set("taperPerLayer", cutout.taperPerLayer());
+        config.set("lineWalls", cutout.lineWalls());
+        config.set("lineFloor", cutout.lineFloor());
+        config.set("wallRecipeId", cutout.wallRecipeId());
+        config.set("floorRecipeId", cutout.floorRecipeId());
+        cutoutSpec(cutout).correct(config);
+        return config;
+    }
+
+    private SplineCutoutConfig deserializeCutout(Config config) {
+        cutoutSpec(SplineCutoutConfig.DEFAULT).correct(config);
+        return new SplineCutoutConfig(
+                config.get("enabled"),
+                config.getInt("depth"),
+                config.getInt("wallThickness"),
+                number(config, "taperPerLayer"),
+                config.get("lineWalls"),
+                config.get("lineFloor"),
+                config.get("wallRecipeId"),
+                config.get("floorRecipeId")
+        );
+    }
+
+    private ConfigSpec cutoutSpec(SplineCutoutConfig defaults) {
+        var spec = new ConfigSpec();
+        spec.define("enabled", defaults.enabled(), Boolean.class::isInstance);
+        spec.defineInRange(
+                "depth", defaults.depth(), 1, SplineCutoutConfig.MAX_DEPTH
+        );
+        spec.defineInRange(
+                "wallThickness", defaults.wallThickness(), 0,
+                SplineCutoutConfig.MAX_WALL_THICKNESS
+        );
+        spec.defineInRange(
+                "taperPerLayer", defaults.taperPerLayer(), 0.0, 1.0
+        );
+        spec.define(
+                "lineWalls", defaults.lineWalls(), Boolean.class::isInstance
+        );
+        spec.define(
+                "lineFloor", defaults.lineFloor(), Boolean.class::isInstance
+        );
+        spec.define(
+                "wallRecipeId", defaults.wallRecipeId(),
+                value -> value instanceof String
+        );
+        spec.define(
+                "floorRecipeId", defaults.floorRecipeId(),
+                value -> value instanceof String
+        );
+        return spec;
+    }
+
+    private Config serializeTreeGeneration(TreeGenerationConfig value) {
+        var config = Config.inMemory();
+        config.set("mode", enumName(value.mode()));
+        config.set("archetype", enumName(value.archetype()));
+        config.set("variationStrength", enumName(value.variationStrength()));
+        config.set("variationSource", enumName(value.variationSource()));
+        config.set("styleLock", value.styleLock());
+        config.set("variant", value.variant());
+        config.set("minimumHeight", value.minimumHeight());
+        config.set("maximumHeight", value.maximumHeight());
+        config.set("minimumBranches", value.minimumBranches());
+        config.set("maximumBranches", value.maximumBranches());
+        config.set("baseRadius", value.baseRadius());
+        config.set("tipRadius", value.tipRadius());
+        config.set("trunkBend", value.trunkBend());
+        config.set("branchLengthScale", value.branchLengthScale());
+        config.set("branchDroop", value.branchDroop());
+        config.set("crownRadius", value.crownRadius());
+        config.set("crownHeight", value.crownHeight());
+        config.set("foliageDensity", value.foliageDensity());
+        config.set("foliageNoiseFrequency", value.foliageNoiseFrequency());
+        config.set("rootCount", value.rootCount());
+        config.set("rootLengthScale", value.rootLengthScale());
+        config.set("trunkRecipeId", value.trunkRecipeId());
+        config.set("branchRecipeId", value.branchRecipeId());
+        config.set("foliageRecipeId", value.foliageRecipeId());
+        config.set("rootRecipeId", value.rootRecipeId());
+        config.set(
+                "skeletonProfile",
+                serializeTreeProfile(value.skeletonProfile())
+        );
+        treeGenerationSpec(value).correct(config);
+        return config;
+    }
+
+    private TreeGenerationConfig deserializeTreeGeneration(Config config) {
+        treeGenerationSpec(TreeGenerationConfig.DEFAULT).correct(config);
+        return new TreeGenerationConfig(
+                parseEnum(config, "mode", TreeMode.class),
+                parseEnum(config, "archetype", TreeArchetype.class),
+                parseEnum(
+                        config,
+                        "variationStrength",
+                        TreeVariationStrength.class
+                ),
+                parseEnum(
+                        config,
+                        "variationSource",
+                        TreeVariationSource.class
+                ),
+                config.get("styleLock"),
+                config.getInt("variant"),
+                config.getInt("minimumHeight"),
+                config.getInt("maximumHeight"),
+                config.getInt("minimumBranches"),
+                config.getInt("maximumBranches"),
+                config.getInt("baseRadius"),
+                config.getInt("tipRadius"),
+                number(config, "trunkBend"),
+                number(config, "branchLengthScale"),
+                number(config, "branchDroop"),
+                config.getInt("crownRadius"),
+                config.getInt("crownHeight"),
+                number(config, "foliageDensity"),
+                number(config, "foliageNoiseFrequency"),
+                config.getInt("rootCount"),
+                number(config, "rootLengthScale"),
+                config.get("trunkRecipeId"),
+                config.get("branchRecipeId"),
+                config.get("foliageRecipeId"),
+                config.get("rootRecipeId"),
+                deserializeTreeProfile(config.get("skeletonProfile"))
+        );
+    }
+
+    private ConfigSpec treeGenerationSpec(TreeGenerationConfig defaults) {
+        var spec = new ConfigSpec();
+        defineEnum(spec, "mode", defaults.mode());
+        defineEnum(spec, "archetype", defaults.archetype());
+        defineEnum(spec, "variationStrength", defaults.variationStrength());
+        defineEnum(spec, "variationSource", defaults.variationSource());
+        spec.define("styleLock", defaults.styleLock(), Boolean.class::isInstance);
+        spec.defineInRange("variant", defaults.variant(), 0, Integer.MAX_VALUE);
+        spec.defineInRange(
+                "minimumHeight", defaults.minimumHeight(), 3,
+                TreeGenerationConfig.MAX_HEIGHT
+        );
+        spec.defineInRange(
+                "maximumHeight", defaults.maximumHeight(), 3,
+                TreeGenerationConfig.MAX_HEIGHT
+        );
+        spec.defineInRange(
+                "minimumBranches", defaults.minimumBranches(), 0,
+                TreeGenerationConfig.MAX_BRANCHES
+        );
+        spec.defineInRange(
+                "maximumBranches", defaults.maximumBranches(), 0,
+                TreeGenerationConfig.MAX_BRANCHES
+        );
+        spec.defineInRange(
+                "baseRadius", defaults.baseRadius(), 1,
+                TreeGenerationConfig.MAX_RADIUS
+        );
+        spec.defineInRange(
+                "tipRadius", defaults.tipRadius(), 1,
+                TreeGenerationConfig.MAX_RADIUS
+        );
+        spec.defineInRange("trunkBend", defaults.trunkBend(), 0.0, 2.0);
+        spec.defineInRange(
+                "branchLengthScale", defaults.branchLengthScale(), 0.1, 4.0
+        );
+        spec.defineInRange(
+                "branchDroop", defaults.branchDroop(), -1.0, 2.0
+        );
+        spec.defineInRange(
+                "crownRadius", defaults.crownRadius(), 1,
+                TreeGenerationConfig.MAX_RADIUS
+        );
+        spec.defineInRange(
+                "crownHeight", defaults.crownHeight(), 1,
+                TreeGenerationConfig.MAX_HEIGHT
+        );
+        spec.defineInRange(
+                "foliageDensity", defaults.foliageDensity(), 0.0, 1.0
+        );
+        spec.defineInRange(
+                "foliageNoiseFrequency",
+                defaults.foliageNoiseFrequency(),
+                0.01,
+                2.0
+        );
+        spec.defineInRange(
+                "rootCount", defaults.rootCount(), 0,
+                TreeGenerationConfig.MAX_ROOTS
+        );
+        spec.defineInRange(
+                "rootLengthScale", defaults.rootLengthScale(), 0.1, 4.0
+        );
+        spec.define(
+                "trunkRecipeId", defaults.trunkRecipeId(),
+                ProceduralPatternConfigSerializer::isBlankOrUuid
+        );
+        spec.define(
+                "branchRecipeId", defaults.branchRecipeId(),
+                ProceduralPatternConfigSerializer::isBlankOrUuid
+        );
+        spec.define(
+                "foliageRecipeId", defaults.foliageRecipeId(),
+                ProceduralPatternConfigSerializer::isBlankOrUuid
+        );
+        spec.define(
+                "rootRecipeId", defaults.rootRecipeId(),
+                ProceduralPatternConfigSerializer::isBlankOrUuid
+        );
+        spec.define(
+                "skeletonProfile",
+                serializeTreeProfile(defaults.skeletonProfile()),
+                Config.class::isInstance
+        );
+        return spec;
+    }
+
+    private Config serializeTreeProfile(TreeProfile profile) {
+        var config = Config.inMemory();
+        config.set("trunkRadius", profile.trunkRadius());
+        config.set("branchRadius", profile.branchRadius());
+        config.set("canopyRadius", profile.canopyRadius());
+        config.set("sampleSpacing", profile.sampleSpacing());
+        treeProfileSpec(profile).correct(config);
+        return config;
+    }
+
+    private TreeProfile deserializeTreeProfile(Config config) {
+        treeProfileSpec(TreeProfile.DEFAULT).correct(config);
+        return new TreeProfile(
+                config.getInt("trunkRadius"),
+                config.getInt("branchRadius"),
+                config.getInt("canopyRadius"),
+                number(config, "sampleSpacing")
+        );
+    }
+
+    private ConfigSpec treeProfileSpec(TreeProfile defaults) {
+        var spec = new ConfigSpec();
+        spec.defineInRange(
+                "trunkRadius",
+                defaults.trunkRadius(),
+                1,
+                TreeProfile.MAX_TRUNK_RADIUS
+        );
+        spec.defineInRange(
+                "branchRadius",
+                defaults.branchRadius(),
+                1,
+                TreeProfile.MAX_BRANCH_RADIUS
+        );
+        spec.defineInRange(
+                "canopyRadius",
+                defaults.canopyRadius(),
+                0,
+                TreeProfile.MAX_CANOPY_RADIUS
+        );
+        spec.defineInRange(
+                "sampleSpacing",
+                defaults.sampleSpacing(),
+                TreeProfile.MIN_SAMPLE_SPACING,
+                TreeProfile.MAX_SAMPLE_SPACING
+        );
         return spec;
     }
 
