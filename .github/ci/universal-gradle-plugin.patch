@@ -1,0 +1,22 @@
+diff --git a/src/main/groovy/dev/huskuraft/universal/gradle/UniversalPlugin.groovy b/src/main/groovy/dev/huskuraft/universal/gradle/UniversalPlugin.groovy
+index 3acb472..c79f912 100644
+--- a/src/main/groovy/dev/huskuraft/universal/gradle/UniversalPlugin.groovy
++++ b/src/main/groovy/dev/huskuraft/universal/gradle/UniversalPlugin.groovy
+@@ -183,7 +183,7 @@ class UniversalPlugin implements Plugin<Project> {
+         project.dependencies.add(configuration, "${apiDep}")
+         project.dependencies.add(configuration, "${targetDep}")
+ 
+-        def shadowJarTargetTaskNotCreated = project.tasks.findByName(shadowJarTargetVersionCode) != null
++        def shadowJarTargetTaskNotCreated = project.tasks.findByName(shadowJarTargetVersionCode) == null
+         def shadowJarTargetTask = project.tasks.maybeCreate(shadowJarTargetVersionCode, ShadowJar.class)
+         if (shadowJarTargetTaskNotCreated) {
+             shadowJarTargetTask.group = "shadow"
+@@ -197,7 +197,7 @@ class UniversalPlugin implements Plugin<Project> {
+         shadowJarTargetTask.dependencyFilter.include(shadowJarTargetTask.dependencyFilter.dependency(apiDep))
+         shadowJarTargetTask.dependencyFilter.include(shadowJarTargetTask.dependencyFilter.dependency(targetDep))
+ 
+-        def transformJarTargetTaskNotCreated = project.tasks.findByName(transformJarTargetVersionCode) != null
++        def transformJarTargetTaskNotCreated = project.tasks.findByName(transformJarTargetVersionCode) == null
+         def transformJarTargetTask = project.tasks.maybeCreate(transformJarTargetVersionCode, JarModificationTask.class)
+         if (transformJarTargetTaskNotCreated) {
+             transformJarTargetTask.dependsOn(shadowJarTargetVersionCode)

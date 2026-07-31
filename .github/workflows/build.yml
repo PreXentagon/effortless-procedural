@@ -1,38 +1,122 @@
-name: Java CI with Gradle
+name: Tests
 
 on:
-  pull_request:
-    branches: ['**']
   push:
-    branches: ['master']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UNIVERSAL_PLUGIN_COMMIT: f6d8cf1242ebeb9eb68ed840ecc508496a4f2a8e
+  UNIVERSAL_API_COMMIT: 525e5b580b73bf516167695ba5b7db272990c440
 
 jobs:
-  build:
-
+  neoforge-1-21-1:
+    name: NeoForge 1.21.1
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
-      - name: Checkout
+      - name: Checkout Effortless
         uses: actions/checkout@v4
-        with:
-          submodules: 'true'
 
-      - name: Setup JDKs
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          java-version: |
-            16
-            17
-            21
-          distribution: 'zulu'
-          cache: 'gradle'
+          distribution: temurin
+          java-version: 21
 
-      - name: Build with Gradle
-        uses: gradle/actions/setup-gradle@v3
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
         with:
-          arguments: build
+          cache-read-only: ${{ github.ref != 'refs/heads/master' }}
 
-      - name: Test with Gradle
-        uses: gradle/actions/setup-gradle@v3
+      - name: Restore pinned Universal Gradle plugin
+        id: universal-plugin-cache
+        uses: actions/cache@v4
         with:
-          arguments: test
+          path: |
+            ~/.m2/repository/dev/huskuraft/universal/dev.huskuraft.universal.gradle.plugin
+            ~/.m2/repository/dev/huskuraft/universal/universal-gradle-plugin-v0.2.0
+          key: universal-plugin-${{ runner.os }}-${{ env.UNIVERSAL_PLUGIN_COMMIT }}-${{ hashFiles('.github/ci/universal-gradle-plugin.patch') }}
+
+      - name: Build pinned Universal Gradle plugin
+        if: steps.universal-plugin-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --no-checkout \
+            https://github.com/huskuraft/universal-gradle-plugin.git \
+            "$RUNNER_TEMP/universal-gradle-plugin"
+          git -C "$RUNNER_TEMP/universal-gradle-plugin" checkout \
+            "$UNIVERSAL_PLUGIN_COMMIT"
+          git -C "$RUNNER_TEMP/universal-gradle-plugin" apply \
+            "$GITHUB_WORKSPACE/.github/ci/universal-gradle-plugin.patch"
+          chmod +x "$RUNNER_TEMP/universal-gradle-plugin/gradlew"
+          "$RUNNER_TEMP/universal-gradle-plugin/gradlew" \
+            --no-daemon --stacktrace publishToMavenLocal
+
+      - name: Restore pinned Universal API
+        id: universal-api-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository/dev/huskuraft/universal/common-api
+            ~/.m2/repository/dev/huskuraft/universal/neoforge-api
+          key: universal-api-${{ runner.os }}-${{ env.UNIVERSAL_API_COMMIT }}-${{ hashFiles('.github/ci/universal-api.patch', '.github/ci/universal-api-settings.gradle') }}
+
+      - name: Build pinned Universal API for NeoForge 1.21.1
+        if: steps.universal-api-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --no-checkout \
+            https://github.com/huskuraft/universal-api.git \
+            "$RUNNER_TEMP/universal-api"
+          git -C "$RUNNER_TEMP/universal-api" checkout \
+            "$UNIVERSAL_API_COMMIT"
+          git -C "$RUNNER_TEMP/universal-api" apply \
+            "$GITHUB_WORKSPACE/.github/ci/universal-api.patch"
+          cp "$GITHUB_WORKSPACE/.github/ci/universal-api-settings.gradle" \
+            "$RUNNER_TEMP/universal-api/settings.gradle"
+          chmod +x "$RUNNER_TEMP/universal-api/gradlew"
+          "$RUNNER_TEMP/universal-api/gradlew" \
+            --no-daemon --stacktrace \
+            :common-api:publishToMavenLocal \
+            :neoforge-api:publishToMavenLocal
+
+      - name: Run tests and build the compatible NeoForge JAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew \
+            --no-daemon --stacktrace --warning-mode all \
+            -PeffortlessTarget=neoforge:1.21.1 \
+            test transformJarTarget3955
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: neoforge-1.21.1-test-reports
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            build/reports/tests/test/
+            build/test-results/test/
+
+      - name: Upload NeoForge development artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: effortless-neoforge-1.21.1
+          if-no-files-found: error
+          retention-days: 14
+          path: build/libs/effortless-1.21.1-*.jar
