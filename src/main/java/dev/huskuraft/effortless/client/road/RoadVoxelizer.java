@@ -70,6 +70,8 @@ public final class RoadVoxelizer {
         }
 
         var cells = new LinkedHashMap<GridPosition, CellCandidate>();
+        var previousBandSamples = new LinkedHashMap<
+                BandLane, BandLaneSample>();
         RoadPoint previousLateral = new RoadPoint(1.0, 0.0, 0.0);
         int totalWidth = profile.totalWidth();
         for (var sample : spline.samples()) {
@@ -254,6 +256,20 @@ public final class RoadVoxelizer {
                                     position.z() + 0.5
                             );
                             var sweptCenter = top.add(0.0, -depth, 0.0);
+                            var lane = new BandLane(
+                                    bandIndex, side, column, depth
+                            );
+                            var laneSample = new BandLaneSample(
+                                    candidate, sweptCenter
+                            );
+                            var previous = previousBandSamples.put(
+                                    lane, laneSample
+                            );
+                            if (previous != null) {
+                                addBandCornerBridge(
+                                        cells, previous, laneSample
+                                );
+                            }
                             cells.merge(
                                     position,
                                     new CellCandidate(
@@ -288,6 +304,92 @@ public final class RoadVoxelizer {
                 .sorted(Comparator.comparing(RoadCell::position))
                 .toList();
         return Result.success(ordered, spline.samples(), spline.length());
+    }
+
+    /** Converts a diagonal sampled step into one orthogonally joined corner. */
+    private static void addBandCornerBridge(
+            LinkedHashMap<GridPosition, CellCandidate> cells,
+            BandLaneSample previous,
+            BandLaneSample current
+    ) {
+        var first = previous.cell().position();
+        var second = current.cell().position();
+        int deltaX = second.x() - first.x();
+        int deltaY = second.y() - first.y();
+        int deltaZ = second.z() - first.z();
+        if (deltaY != 0 || Math.abs(deltaX) != 1
+                || Math.abs(deltaZ) != 1) {
+            return;
+        }
+
+        var crossFirst = new GridPosition(
+                first.x(), first.y(), second.z()
+        );
+        var crossSecond = new GridPosition(
+                second.x(), first.y(), first.z()
+        );
+        var midpoint = previous.sweptCenter()
+                .add(current.sweptCenter())
+                .mul(0.5);
+
+        var firstBridge = bridgeCandidate(
+                crossFirst, current.cell(), midpoint
+        );
+        var secondBridge = bridgeCandidate(
+                crossSecond, previous.cell(), midpoint
+        );
+        var selected = preferredOpenBridge(
+                cells, firstBridge, secondBridge
+        );
+        if (selected != null) {
+            cells.merge(
+                    selected.cell().position(), selected,
+                    RoadVoxelizer::preferred
+            );
+        }
+    }
+
+    private static CellCandidate bridgeCandidate(
+            GridPosition position,
+            RoadCell source,
+            RoadPoint midpoint
+    ) {
+        var cell = new RoadCell(
+                position, RoadCell.Role.BAND,
+                source.geometry(), source.bandIndex()
+        );
+        var center = new RoadPoint(
+                position.x() + 0.5,
+                position.y() + 0.5,
+                position.z() + 0.5
+        );
+        return new CellCandidate(
+                cell, midpoint.distanceSquared(center)
+        );
+    }
+
+    private static CellCandidate preferredOpenBridge(
+            LinkedHashMap<GridPosition, CellCandidate> cells,
+            CellCandidate first,
+            CellCandidate second
+    ) {
+        boolean firstOpen = !cells.containsKey(first.cell().position());
+        boolean secondOpen = !cells.containsKey(second.cell().position());
+        if (!firstOpen && !secondOpen) {
+            return null;
+        }
+        if (firstOpen != secondOpen) {
+            return firstOpen ? first : second;
+        }
+        int distance = Double.compare(
+                first.voxelCenterDistanceSquared(),
+                second.voxelCenterDistanceSquared()
+        );
+        if (distance != 0) {
+            return distance < 0 ? first : second;
+        }
+        return first.cell().position().compareTo(second.cell().position()) <= 0
+                ? first : second;
     }
 
     private static CellCandidate preferred(
@@ -444,6 +546,20 @@ public final class RoadVoxelizer {
     private record CellCandidate(
             RoadCell cell,
             double voxelCenterDistanceSquared
+    ) {
+    }
+
+    private record BandLane(
+            int bandIndex,
+            int side,
+            int column,
+            int depth
+    ) {
+    }
+
+    private record BandLaneSample(
+            RoadCell cell,
+            RoadPoint sweptCenter
     ) {
     }
 

@@ -1,7 +1,10 @@
 package dev.huskuraft.effortless.client.tree;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -9,6 +12,11 @@ import org.junit.jupiter.api.Test;
 
 import dev.huskuraft.effortless.client.pattern.procedural.GridPosition;
 import dev.huskuraft.effortless.client.pattern.procedural.StructuralGeometry;
+import dev.huskuraft.effortless.client.road.RoadCell;
+import dev.huskuraft.effortless.client.road.RoadPoint;
+import dev.huskuraft.effortless.client.road.RoadProfile;
+import dev.huskuraft.effortless.client.road.RoadVoxelizer;
+import dev.huskuraft.effortless.client.road.SplineCrossSectionBand;
 
 class TreeBlockStateResolverTest {
 
@@ -113,4 +121,125 @@ class TreeBlockStateResolverTest {
         assertEquals("east", desired.get("facing"));
         assertEquals("bottom", desired.get("half"));
     }
+
+    @Test
+    void openFrontTurnUsesOuterCornerShape() {
+        var current = new GridPosition(0, 0, 0);
+        var front = current.offset(1, 0, 0);
+        var geometries = new LinkedHashMap<
+                GridPosition, StructuralGeometry>();
+        geometries.put(current, stairFacing(1.0, 0.0));
+        geometries.put(front, stairFacing(0.0, 1.0));
+
+        assertEquals(
+                "outer_right",
+                TreeBlockStateResolver.stairShape(
+                        current, geometries.get(current), geometries,
+                        Set.copyOf(geometries.keySet())
+                )
+        );
+    }
+
+    @Test
+    void parallelSideRunPreventsDisconnectedOuterCorner() {
+        var current = new GridPosition(0, 0, 0);
+        var front = current.offset(1, 0, 0);
+        var side = current.offset(0, 0, -1);
+        var geometries = new LinkedHashMap<
+                GridPosition, StructuralGeometry>();
+        geometries.put(current, stairFacing(1.0, 0.0));
+        geometries.put(front, stairFacing(0.0, 1.0));
+        geometries.put(side, stairFacing(1.0, 0.0));
+
+        assertEquals(
+                "straight",
+                TreeBlockStateResolver.stairShape(
+                        current, geometries.get(current), geometries,
+                        Set.copyOf(geometries.keySet())
+                )
+        );
+    }
+
+    @Test
+    void openBackTurnUsesInnerCornerShape() {
+        var current = new GridPosition(0, 0, 0);
+        var back = current.offset(-1, 0, 0);
+        var geometries = new LinkedHashMap<
+                GridPosition, StructuralGeometry>();
+        geometries.put(current, stairFacing(1.0, 0.0));
+        geometries.put(back, stairFacing(0.0, -1.0));
+
+        assertEquals(
+                "inner_left",
+                TreeBlockStateResolver.stairShape(
+                        current, geometries.get(current), geometries,
+                        Set.copyOf(geometries.keySet())
+                )
+        );
+    }
+
+    @Test
+    void curvedSplineBandProducesConnectedCornerStates() {
+        var profile = new RoadProfile(5, 1, 0, 0.2, 0.2)
+                .withCrossSectionBands(List.of(
+                        new SplineCrossSectionBand(
+                                "Stairs", 1, -1, 1,
+                                SplineCrossSectionBand.Side.BOTH,
+                                SplineCrossSectionBand.Placement.STAIR_OUTWARD,
+                                ""
+                        )
+                ));
+        var road = RoadVoxelizer.voxelize(
+                List.of(
+                        new RoadPoint(0.5, 0.5, 0.5),
+                        new RoadPoint(8.5, 0.5, 0.5),
+                        new RoadPoint(8.5, 0.5, 8.5)
+                ),
+                profile
+        );
+        assertTrue(road.isSuccess(), () -> road.errors().toString());
+
+        var geometries = new LinkedHashMap<
+                GridPosition, StructuralGeometry>();
+        road.cells().stream()
+                .filter(cell -> cell.role() == RoadCell.Role.BAND)
+                .forEach(cell -> geometries.put(
+                        cell.position(), cell.geometry()
+                ));
+        var stairs = Set.copyOf(geometries.keySet());
+        var shapes = new LinkedHashMap<GridPosition, String>();
+        geometries.forEach((position, geometry) -> shapes.put(
+                position,
+                TreeBlockStateResolver.stairShape(
+                        position, geometry, geometries, stairs
+                )
+        ));
+
+        assertTrue(
+                shapes.values().stream().anyMatch(shape ->
+                        shape.startsWith("inner_")),
+                "The curved stair band should contain an inner corner"
+        );
+        var repeated = new LinkedHashMap<GridPosition, String>();
+        geometries.forEach((position, geometry) -> repeated.put(
+                position,
+                TreeBlockStateResolver.stairShape(
+                        position, geometry, geometries, stairs
+                )
+        ));
+        assertEquals(shapes, repeated);
+    }
+
+    private static StructuralGeometry stairFacing(
+            double normalX,
+            double normalZ
+    ) {
+        return new StructuralGeometry(
+                0.5, 0.5, 0.95,
+                1.0, 0.0, 0.0, 0.0,
+                1.0, 0.0, 0.0,
+                normalX, 0.0, normalZ
+        );
+    }
+
 }
