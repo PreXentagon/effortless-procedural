@@ -9,6 +9,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 
 import dev.huskuraft.effortless.client.pattern.procedural.GridPosition;
 import dev.huskuraft.effortless.client.pattern.procedural.RailBlockStateResolver;
@@ -23,6 +24,10 @@ import dev.huskuraft.universal.api.core.BlockState;
  * selects the closest variant by stable property names.
  */
 public final class TreeBlockStateResolver {
+
+    private static final Set<String> HORIZONTAL_FACINGS = Set.of(
+            "north", "south", "west", "east"
+    );
 
     private static final Map<Object, List<BlockState>> VARIANTS =
             Collections.synchronizedMap(new IdentityHashMap<>());
@@ -204,55 +209,152 @@ public final class TreeBlockStateResolver {
         if (geometries.isEmpty() || rawStates.isEmpty()) {
             return "straight";
         }
-        String facing = facing(
-                geometry,
-                available.getOrDefault("facing", Set.of())
+        return stairShape(
+                position, geometry, geometries,
+                candidate -> isStair(rawStates.get(candidate)),
+                available.getOrDefault("facing", HORIZONTAL_FACINGS)
         );
-        int[] direction = horizontalDirection(facing);
-        if (direction == null) {
-            return "straight";
-        }
-        var front = position.offset(direction[0], 0, direction[1]);
-        String turn = stairTurn(
-                facing, geometries.get(front), rawStates.get(front)
-        );
-        if (turn != null) {
-            return "outer_" + turn;
-        }
-        var back = position.offset(-direction[0], 0, -direction[1]);
-        turn = stairTurn(
-                facing, geometries.get(back), rawStates.get(back)
-        );
-        return turn == null ? "straight" : "inner_" + turn;
     }
 
-    private static String stairTurn(
-            String facing,
-            StructuralGeometry neighbor,
-            BlockState neighborState
+    static String stairShape(
+            GridPosition position,
+            StructuralGeometry geometry,
+            Map<GridPosition, StructuralGeometry> geometries,
+            Set<GridPosition> stairPositions
     ) {
-        if (neighbor == null || neighborState == null) {
-            return null;
-        }
-        var properties = properties(neighborState);
-        if (!properties.containsKey("shape")
-                || !properties.containsKey("half")
-                || !properties.containsKey("facing")) {
-            return null;
-        }
-        String neighborFacing = facing(
-                neighbor,
-                Set.of("north", "south", "east", "west")
+        return stairShape(
+                position, geometry, geometries,
+                stairPositions::contains, HORIZONTAL_FACINGS
         );
-        int[] current = horizontalDirection(facing);
-        int[] next = horizontalDirection(neighborFacing);
-        if (current == null || next == null
-                || current[0] == next[0] && current[1] == next[1]
-                || current[0] == -next[0] && current[1] == -next[1]) {
+    }
+
+    private static String stairShape(
+            GridPosition position,
+            StructuralGeometry geometry,
+            Map<GridPosition, StructuralGeometry> geometries,
+            Predicate<GridPosition> isStair,
+            Set<String> allowedFacings
+    ) {
+        var current = stairAt(
+                position, geometry, isStair, allowedFacings
+        );
+        if (current == null) {
+            return "straight";
+        }
+        int[] direction = horizontalDirection(current.facing());
+        if (direction == null || geometries.isEmpty()) {
+            return "straight";
+        }
+
+        var front = position.offset(direction[0], 0, direction[1]);
+        var frontStair = stairAt(
+                front, geometries.get(front), isStair, allowedFacings
+        );
+        if (isPerpendicularTurn(current, frontStair)
+                && canTakeShape(
+                        current, position,
+                        opposite(frontStair.facing()), geometries,
+                        isStair, allowedFacings
+                )) {
+            return "outer_" + turn(current, frontStair);
+        }
+
+        var back = position.offset(-direction[0], 0, -direction[1]);
+        var backStair = stairAt(
+                back, geometries.get(back), isStair, allowedFacings
+        );
+        if (isPerpendicularTurn(current, backStair)
+                && canTakeShape(
+                        current, position, backStair.facing(), geometries,
+                        isStair, allowedFacings
+                )) {
+            return "inner_" + turn(current, backStair);
+        }
+        return "straight";
+    }
+
+    private static StairDescriptor stairAt(
+            GridPosition position,
+            StructuralGeometry geometry,
+            Predicate<GridPosition> isStair,
+            Set<String> allowedFacings
+    ) {
+        if (position == null || geometry == null || !isStair.test(position)) {
             return null;
         }
-        int cross = current[0] * next[1] - current[1] * next[0];
+        return new StairDescriptor(
+                facing(geometry, allowedFacings), slabHalf(geometry)
+        );
+    }
+
+    private static boolean isStair(BlockState state) {
+        if (state == null) {
+            return false;
+        }
+        var values = properties(state);
+        return values.containsKey("shape")
+                && values.containsKey("half")
+                && values.containsKey("facing");
+    }
+
+    private static boolean isPerpendicularTurn(
+            StairDescriptor current,
+            StairDescriptor neighbor
+    ) {
+        if (neighbor == null || !current.half().equals(neighbor.half())) {
+            return false;
+        }
+        int[] first = horizontalDirection(current.facing());
+        int[] second = horizontalDirection(neighbor.facing());
+        return first != null && second != null
+                && first[0] * second[0] + first[1] * second[1] == 0;
+    }
+
+    private static boolean canTakeShape(
+            StairDescriptor current,
+            GridPosition position,
+            String side,
+            Map<GridPosition, StructuralGeometry> geometries,
+            Predicate<GridPosition> isStair,
+            Set<String> allowedFacings
+    ) {
+        int[] direction = horizontalDirection(side);
+        if (direction == null) {
+            return false;
+        }
+        var adjacentPosition = position.offset(
+                direction[0], 0, direction[1]
+        );
+        var adjacent = stairAt(
+                adjacentPosition, geometries.get(adjacentPosition),
+                isStair, allowedFacings
+        );
+        return adjacent == null
+                || !current.facing().equals(adjacent.facing())
+                || !current.half().equals(adjacent.half());
+    }
+
+    private static String turn(
+            StairDescriptor current,
+            StairDescriptor neighbor
+    ) {
+        int[] first = horizontalDirection(current.facing());
+        int[] second = horizontalDirection(neighbor.facing());
+        int cross = first[0] * second[1] - first[1] * second[0];
         return cross < 0 ? "left" : "right";
+    }
+
+    private static String opposite(String facing) {
+        return switch (facing) {
+            case "north" -> "south";
+            case "south" -> "north";
+            case "west" -> "east";
+            case "east" -> "west";
+            default -> facing;
+        };
+    }
+
+    private record StairDescriptor(String facing, String half) {
     }
 
     private static int[] horizontalDirection(String facing) {
