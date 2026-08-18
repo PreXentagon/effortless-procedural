@@ -498,4 +498,88 @@ class ProceduralPatternConfigSerializerTest {
         assertEquals(TreeMode.GUIDED, tree.mode());
         assertEquals(profile, tree.skeletonProfile());
     }
+
+    @Test
+    void sceneCompositionStackRoundTripsOnlyInClientConfiguration() {
+        var linked = UUID.fromString(
+                "a978b418-af80-4438-9cc3-6dcf2b27dbaf"
+        );
+        var layer = new ProceduralCompositionLayer(
+                "Trees beside spline",
+                true,
+                ProceduralCompositionLayer.Operation.REPLACE,
+                ProceduralCompositionLayer.Generator.TREE,
+                ProceduralCompositionLayer.Anchor.PATH,
+                ProceduralCompositionLayer.Primitive.ARCH,
+                linked.toString(),
+                1.5, 2.0, -0.5,
+                9, 14, 7,
+                35.0,
+                true,
+                2,
+                6.5,
+                50,
+                991L,
+                true
+        );
+        var preset = ProceduralPatternPreset.DEFAULT.withAdvanced(
+                ProceduralAdvancedConfig.DEFAULT
+                        .withCompositionLayers(List.of(layer))
+        );
+        var original = new ProceduralPatternLibrary(
+                true, preset.id(), List.of(preset)
+        );
+        var serializer = new ProceduralPatternConfigSerializer();
+
+        var restored = serializer.deserialize(serializer.serialize(original));
+
+        assertEquals(
+                List.of(layer),
+                restored.activePreset().orElseThrow()
+                        .advanced().compositionLayers()
+        );
+        assertEquals(
+                preset.stockTransformers(),
+                restored.activePreset().orElseThrow().stockTransformers()
+        );
+    }
+
+    @Test
+    void selectedClientToolRoundTripsWithoutChangingStockTransformers() {
+        var original = ProceduralPatternLibrary.DEFAULT
+                .withActiveToolId("road");
+        var serializer = new ProceduralPatternConfigSerializer();
+
+        var restored = serializer.deserialize(serializer.serialize(original));
+
+        assertEquals("road", restored.activeToolId());
+        assertEquals(
+                original.activePreset().orElseThrow().stockTransformers(),
+                restored.activePreset().orElseThrow().stockTransformers()
+        );
+    }
+
+    @Test
+    void removingLastRecipePreservesToolAndReusableFields() {
+        var asset = new ProceduralFieldAsset(
+                UUID.fromString("275c318a-5130-4d6f-8b88-f292521d30c4"),
+                "Shared field",
+                dev.huskuraft.effortless.client.pattern.procedural
+                        .SpatialField.DEFAULT,
+                ProceduralNoiseConfig.DEFAULT
+        );
+        var original = new ProceduralPatternLibrary(
+                true,
+                ProceduralPatternPreset.DEFAULT.id(),
+                List.of(ProceduralPatternPreset.DEFAULT),
+                List.of(asset),
+                "tree"
+        );
+
+        var restored = original.remove(ProceduralPatternPreset.DEFAULT.id());
+
+        assertEquals("tree", restored.activeToolId());
+        assertEquals(List.of(asset), restored.fieldAssets());
+        assertEquals(1, restored.presets().size());
+    }
 }

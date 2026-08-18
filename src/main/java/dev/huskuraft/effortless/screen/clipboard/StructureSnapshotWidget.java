@@ -43,13 +43,13 @@ public final class StructureSnapshotWidget extends AbstractWidget {
             if (blockData.blockState() != null) {
                 renderer.pushPose();
                 renderer.translate(blockData.blockPosition().x(), blockData.blockPosition().y(), blockData.blockPosition().z());
-                renderer.renderBlockState(BlockRenderLayers.block(Color.WHITE.getRGB()), getEntrance().getClient().getWorld(), blockData.blockPosition().add(getEntrance().getClient().getPlayer().getPosition().toVector3i()), blockData.blockState());
+                renderer.renderBlockState(BlockRenderLayers.previewBlock(Color.WHITE.getRGB()), getEntrance().getClient().getWorld(), blockData.blockPosition().add(getEntrance().getClient().getPlayer().getPosition().toVector3i()), blockData.blockState());
                 renderer.popPose();
             }
             if (blockData.blockEntity() != null) {
                 renderer.pushPose();
                 renderer.translate(blockData.blockPosition().x(), blockData.blockPosition().y(), blockData.blockPosition().z());
-                renderer.renderBlockEntity(BlockRenderLayers.block(Color.WHITE.getRGB()), getEntrance().getClient().getWorld(), blockData.blockPosition().add(getEntrance().getClient().getPlayer().getPosition().toVector3i()), blockData.blockEntity());
+                renderer.renderBlockEntity(BlockRenderLayers.previewBlock(Color.WHITE.getRGB()), getEntrance().getClient().getWorld(), blockData.blockPosition().add(getEntrance().getClient().getPlayer().getPosition().toVector3i()), blockData.blockEntity());
                 renderer.popPose();
             }
         }

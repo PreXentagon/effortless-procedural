@@ -3,12 +3,13 @@ package dev.huskuraft.effortless.screen.pattern.procedural;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.function.DoubleFunction;
+import java.util.function.Supplier;
 import java.util.function.ToDoubleFunction;
 
 import dev.huskuraft.effortless.Effortless;
@@ -27,6 +28,8 @@ import dev.huskuraft.effortless.client.pattern.procedural.StructuralPlacementMod
 import dev.huskuraft.effortless.client.pattern.procedural.config.PatternMaterialSource;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralAdvancedConfig;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralBlockEntry;
+import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralCompositionLayer;
+import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralCompositionTemplates;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralNoiseConfig;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralPatternPreset;
 import dev.huskuraft.effortless.client.generator.ClientToolSubtype;
@@ -44,7 +47,6 @@ import dev.huskuraft.effortless.building.pattern.mirror.MirrorTransformer;
 import dev.huskuraft.effortless.building.pattern.raidal.RadialTransformer;
 import dev.huskuraft.effortless.building.structure.BuildMode;
 import dev.huskuraft.effortless.building.structure.BuildFeature;
-import dev.huskuraft.effortless.building.structure.BuildFeatures;
 import dev.huskuraft.effortless.building.structure.builder.Structure;
 import dev.huskuraft.effortless.screen.common.EffortlessScreen;
 import dev.huskuraft.effortless.screen.item.EffortlessItemPickerScreen;
@@ -61,12 +63,13 @@ import dev.huskuraft.universal.api.text.ChatFormatting;
 import dev.huskuraft.universal.api.text.Text;
 
 /**
- * Full-screen client-only pattern workbench.
+ * Full-screen client-only Effortless workbench.
  *
- * <p>The left pane owns preset selection, the center pane owns the ordered
- * visual palette, and the right inspector owns distribution/rule settings.
- * All panes edit one {@link ProceduralWorkbenchSession}; only the final Save
- * writes the local TOML configuration.</p>
+ * <p>The left pane owns recipe selection, the center pane owns the active
+ * build-tool selector, preview and ordered palette, and the right inspector
+ * owns form/distribution/rule settings. All panes edit one
+ * {@link ProceduralWorkbenchSession}; only the final Save writes recipe
+ * changes to the local TOML configuration.</p>
  */
 public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
 
@@ -80,24 +83,23 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
     private final ProceduralWorkbenchSession session;
     private final ProceduralTooltipDelay tooltipDelay =
             new ProceduralTooltipDelay();
-    private InspectorTab inspectorTab = InspectorTab.MATERIALS;
-    private CompactView compactView = CompactView.PALETTE;
+    private InspectorTab inspectorTab = InspectorTab.FORM;
+    private CompactView compactView = CompactView.FORM;
     private ProceduralPreviewType previewType = ProceduralPreviewType.WALL;
     private PreviewOrientation previewOrientation =
             PreviewOrientation.defaultFor(previewType);
     private boolean previewSubtypesExpanded;
     private SplineSubtype previewSplineSubtype = SplineSubtype.FLAT_ROAD;
     private TreeArchetype previewTreeArchetype = TreeArchetype.OAK;
-    private final EnumMap<
-            BuildMode,
-            EnumMap<BuildFeatures, BuildFeature>
-    > previewFeatureOverrides = new EnumMap<>(BuildMode.class);
     private String presetSearch = "";
     private int selectedBlockIndex;
     private int selectedTransformerIndex;
+    private int selectedCompositionIndex;
+    private int soloCompositionIndex = -1;
 
     private ProceduralPresetList presetList;
     private TextRuleList<Transformer> transformerList;
+    private TextRuleList<ProceduralCompositionLayer> compositionList;
     private Button enableButton;
     private Button useButton;
     private Button deletePresetButton;
@@ -138,7 +140,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
     private int rightWidth;
 
     public EffortlessProceduralPatternScreen(Entrance entrance) {
-        super(entrance, Text.text("Pattern Workbench"));
+        super(entrance, Text.text("Effortless Workbench"));
         this.session = new ProceduralWorkbenchSession(
                 getEntrance().getProceduralConfigStorage().get()
         );
@@ -149,6 +151,8 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
         if (session.selectedPreset().stockTransformers().isEmpty()) {
             session.importStockGeometry(stockPattern);
         }
+        previewType = activeBuildTool();
+        previewOrientation = PreviewOrientation.defaultFor(previewType);
         syncPreviewSubtypesFromRecipe();
     }
 
@@ -256,10 +260,16 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
             saveButton.setActive(session.isDirty());
         }
         if (draftStatusWidget != null) {
+            String previewStatus = previewWidget == null
+                    ? "idle" : previewWidget.compactStatusText();
+            int layerCount = session.selectedPreset().advanced()
+                    .compositionLayers().size();
             draftStatusWidget.setMessage(
-                    Text.text(session.isDirty()
-                                    ? "Unsaved changes"
+                    Text.text((session.isDirty()
+                                    ? "Unsaved"
                                     : "Saved")
+                                    + "  |  " + previewStatus
+                                    + "  |  L" + layerCount)
                             .withStyle(session.isDirty()
                                     ? ChatFormatting.GOLD
                                     : ChatFormatting.GREEN)
@@ -294,8 +304,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
             UUID after = presetList.getSelected().getItem().id();
             if (!after.equals(before)) {
                 session.select(after);
-                selectedBlockIndex = 0;
-                syncPreviewSubtypesFromRecipe();
+                resetSelectedRecipeUi();
                 recreate();
                 return true;
             }
@@ -304,6 +313,14 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
             int after = transformerList.indexOfSelected();
             if (after != selectedTransformerIndex) {
                 selectedTransformerIndex = after;
+                recreate();
+                return true;
+            }
+        }
+        if (compositionList != null && compositionList.hasSelected()) {
+            int after = compositionList.indexOfSelected();
+            if (after != selectedCompositionIndex) {
+                selectedCompositionIndex = after;
                 recreate();
                 return true;
             }
@@ -407,6 +424,21 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
             saveLibrary();
             return true;
         }
+        if (control && keyCode == Keys.KEY_P.getValue()) {
+            openCommandPalette();
+            return true;
+        }
+        if (control && keyCode == Keys.KEY_F.getValue()
+                && searchField != null) {
+            setFocused(searchField);
+            searchField.setCursorPosition(searchField.getValue().length());
+            searchField.setHighlightPos(0);
+            return true;
+        }
+        if (control && keyCode == Keys.KEY_D.getValue()) {
+            duplicateSelectedRecipe();
+            return true;
+        }
         return super.onKeyPressed(keyCode, scanCode, modifiers);
     }
 
@@ -426,7 +458,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
             cancelButton.setMessage(Text.text("Discard changes?"));
         }
         message(
-                "Pattern workbench has unsaved changes; close again to discard",
+                "Builder workbench has unsaved changes; close again to discard",
                 ChatFormatting.GOLD
         );
     }
@@ -590,7 +622,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 headerY,
                 Text.text(compactLayout
                                 ? "STOCK"
-                                : "PATTERN RECIPE / STOCK SERVER OUTPUT")
+                        : "CTRL+P COMMANDS / STOCK SERVER OUTPUT")
                         .withStyle(ChatFormatting.GRAY),
                 TextWidget.Gravity.END
         ));
@@ -599,22 +631,30 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
     private void addPresetPane() {
         int innerX = leftX + GAP;
         int innerWidth = leftWidth - GAP * 2;
+        int y = contentTop + GAP;
+        addWidget(new TextWidget(
+                getEntrance(),
+                innerX,
+                y + 3,
+                Text.text("RECIPES").withStyle(ChatFormatting.GRAY)
+        ));
+        y += 15;
         enableButton = addButton(
                 innerX,
-                contentTop + GAP,
+                y,
                 innerWidth,
                 enabledMessage(),
                 button -> session.setEnabled(!session.library().enabled())
         );
 
-        int searchY = contentTop + GAP + BUTTON_HEIGHT + GAP;
+        int searchY = y + BUTTON_HEIGHT + GAP;
         searchField = addWidget(new ReliableEditBox(
                 getEntrance(),
                 innerX,
                 searchY,
                 innerWidth,
                 BUTTON_HEIGHT,
-                Text.text("Search patterns")
+                Text.text("Search recipes")
         ));
         searchField.setHint(
                 Text.text("Search...").withStyle(ChatFormatting.GRAY)
@@ -666,8 +706,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 button -> {
                     session.addPreset();
                     presetSearch = "";
-                    selectedBlockIndex = 0;
-                    syncPreviewSubtypesFromRecipe();
+                    resetSelectedRecipeUi();
                     recreate();
                 }
         );
@@ -679,8 +718,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 button -> {
                     session.duplicateSelected();
                     presetSearch = "";
-                    selectedBlockIndex = 0;
-                    syncPreviewSubtypesFromRecipe();
+                    resetSelectedRecipeUi();
                     recreate();
                 }
         );
@@ -691,8 +729,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 Text.text(compactLayout ? "Del" : "Delete"),
                 button -> {
                     session.deleteSelected();
-                    selectedBlockIndex = 0;
-                    syncPreviewSubtypesFromRecipe();
+                    resetSelectedRecipeUi();
                     recreate();
                 }
         );
@@ -722,46 +759,15 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
         int innerX = centerX + GAP;
         int innerWidth = centerWidth - GAP * 2;
         int y = contentTop + GAP;
-        int tabCount = CompactView.values().length;
-        int columns = innerWidth < 240
-                ? 4
-                : innerWidth < 420 ? 5 : tabCount;
-        int rows = (tabCount + columns - 1) / columns;
-        int tabWidth = Math.max(
-                1,
-                (innerWidth - GAP * (columns - 1)) / columns
+        y = addPanelTabs(
+                innerX, y, innerWidth,
+                CompactView.values(),
+                () -> compactView,
+                value -> compactView = value
         );
-        for (int index = 0; index < tabCount; index++) {
-            var view = CompactView.values()[index];
-            int column = index % columns;
-            int row = index / columns;
-            int x = innerX + column * (tabWidth + GAP);
-            int width = column == columns - 1
-                    ? innerX + innerWidth - x
-                    : tabWidth;
-            addWidget(new WorkbenchToolTab(
-                    getEntrance(),
-                    x,
-                    y + row * (BUTTON_HEIGHT + GAP),
-                    width,
-                    BUTTON_HEIGHT,
-                    Text.text(view.label),
-                    Text.text(view.title),
-                    Text.translate(
-                            "effortless.procedural.tooltip.tab."
-                                    + view.key
-                    ),
-                    view.accent,
-                    () -> compactView == view,
-                    () -> {
-                        compactView = view;
-                        recreate();
-                    }
-            ));
-        }
-        y += rows * (BUTTON_HEIGHT + GAP);
         int availableHeight = contentTop + contentHeight - y - GAP;
         switch (compactView) {
+            case FORM -> addActiveToolInspector(innerX, y, innerWidth);
             case PALETTE -> addCompactPalettePane(
                     innerX,
                     y,
@@ -780,8 +786,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
             case NOISE -> addNoiseInspector(innerX, y, innerWidth);
             case RULES -> addRulesInspector(innerX, y, innerWidth);
             case MASKS -> addMasksInspector(innerX, y, innerWidth);
-            case ROAD -> addRoadInspector(innerX, y, innerWidth);
-            case TREE -> addTreeInspector(innerX, y, innerWidth);
+            case SCENE -> addSceneInspector(innerX, y, innerWidth);
             case TRANSFORMS -> addTransformsInspector(
                     innerX,
                     y,
@@ -812,7 +817,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 y,
                 innerWidth - nameLabelWidth - sourceWidth - GAP,
                 BUTTON_HEIGHT,
-                Text.text("Pattern name")
+                Text.text("Recipe name")
         ));
         nameField.setMaxLength(80);
         nameField.setValue(draft.name());
@@ -933,7 +938,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 y,
                 innerWidth,
                 Math.max(48, availableHeight - selectorHeight - GAP),
-                () -> session.selectedPreset(),
+                this::previewPreset,
                 () -> session.library(),
                 () -> previewType,
                 () -> previewOrientation,
@@ -987,7 +992,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 y,
                 innerWidth - nameLabelWidth,
                 BUTTON_HEIGHT,
-                Text.text("Pattern name")
+                Text.text("Recipe name")
         ));
         nameField.setMaxLength(80);
         nameField.setValue(draft.name());
@@ -1022,7 +1027,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 y,
                 innerWidth,
                 previewHeight,
-                () -> session.selectedPreset(),
+                this::previewPreset,
                 () -> session.library(),
                 () -> previewType,
                 () -> previewOrientation,
@@ -1164,7 +1169,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                     previewType = value;
                     previewOrientation = PreviewOrientation.defaultFor(value);
                     previewSubtypesExpanded = value.hasSubtypes();
-                    recreate();
+                    selectBuildTool(value);
                 },
                 () -> previewOrientation,
                 value -> {
@@ -1188,9 +1193,15 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
 
     private void setPreviewClientSubtype(ClientToolSubtype value) {
         if (value instanceof TreeArchetype archetype) {
-            previewTreeArchetype = archetype;
+            updateTreeGeneration(current -> current.withArchetype(archetype));
+            getEntrance().getClientManager().getTreeEditor().start(
+                    session.selectedPreset().advanced().treeGeneration()
+            );
         } else if (value instanceof SplineSubtype subtype) {
-            previewSplineSubtype = subtype;
+            updateRoadProfile(current -> current.withSubtype(subtype));
+            getEntrance().getClientManager().getRoadEditor().start(
+                    session.selectedPreset().advanced().roadProfile()
+            );
         }
         recreate();
     }
@@ -1205,15 +1216,6 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
         var result = configured == null
                 ? previewMode.getDefaultStructure()
                 : configured;
-        var overrides = previewFeatureOverrides.get(previewMode);
-        if (overrides != null) {
-            for (var type : BuildFeatures.values()) {
-                var feature = overrides.get(type);
-                if (feature != null) {
-                    result = result.withFeature(feature);
-                }
-            }
-        }
         return result;
     }
 
@@ -1221,11 +1223,15 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
         if (previewType.isClientOnly()) {
             return;
         }
-        var previewMode = previewType.stockMode();
-        previewFeatureOverrides.computeIfAbsent(
-                previewMode,
-                ignored -> new EnumMap<>(BuildFeatures.class)
-        ).put(feature.getType(), feature);
+        var player = getEntrance().getClient().getPlayer();
+        var current = getEntrance().getStructureBuilder()
+                .getContext(player).structure();
+        var changed = current.withFeature(feature);
+        if (getEntrance().getStructureBuilder().setStructure(
+                player, changed
+        )) {
+            getEntrance().getConfigStorage().setStructure(changed);
+        }
         recreate();
     }
 
@@ -1343,52 +1349,21 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
         int innerX = rightX + GAP;
         int innerWidth = rightWidth - GAP * 2;
         int y = contentTop + GAP;
-        var tabs = InspectorTab.values();
-        int columns = innerWidth < 240
-                ? 4
-                : innerWidth < 420 ? 5 : tabs.length;
-        int rows = (tabs.length + columns - 1) / columns;
-        int tabWidth = Math.max(
-                1,
-                (innerWidth - GAP * (columns - 1)) / columns
+        y = addPanelTabs(
+                innerX, y, innerWidth,
+                InspectorTab.values(),
+                () -> inspectorTab,
+                value -> inspectorTab = value
         );
-        for (int index = 0; index < tabs.length; index++) {
-            var tab = tabs[index];
-            int column = index % columns;
-            int row = index / columns;
-            int x = innerX + column * (tabWidth + GAP);
-            int width = column == columns - 1
-                    ? innerX + innerWidth - x
-                    : tabWidth;
-            addWidget(new WorkbenchToolTab(
-                    getEntrance(),
-                    x,
-                    y + row * (BUTTON_HEIGHT + GAP),
-                    width,
-                    BUTTON_HEIGHT,
-                    Text.text(tab.label),
-                    Text.text(tab.title),
-                    Text.translate(
-                            "effortless.procedural.tooltip.tab." + tab.key
-                    ),
-                    tab.accent,
-                    () -> inspectorTab == tab,
-                    () -> {
-                        inspectorTab = tab;
-                        recreate();
-                    }
-            ));
-        }
-        y += rows * (BUTTON_HEIGHT + GAP);
 
         switch (inspectorTab) {
+            case FORM -> addActiveToolInspector(innerX, y, innerWidth);
             case MATERIALS -> addMaterialsInspector(innerX, y, innerWidth);
             case GRADIENT -> addGradientInspector(innerX, y, innerWidth);
             case NOISE -> addNoiseInspector(innerX, y, innerWidth);
             case RULES -> addRulesInspector(innerX, y, innerWidth);
             case MASKS -> addMasksInspector(innerX, y, innerWidth);
-            case ROAD -> addRoadInspector(innerX, y, innerWidth);
-            case TREE -> addTreeInspector(innerX, y, innerWidth);
+            case SCENE -> addSceneInspector(innerX, y, innerWidth);
             case TRANSFORMS -> addTransformsInspector(
                     innerX,
                     y,
@@ -1396,6 +1371,81 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
             );
             case OUTPUT -> addOutputInspector(innerX, y, innerWidth);
         }
+    }
+
+    private ProceduralPreviewType activeBuildTool() {
+        var manager = getEntrance().getClientManager();
+        if (manager.getRoadEditor().isActive()) {
+            return ProceduralPreviewType.ROAD;
+        }
+        if (manager.getTreeEditor().isActive()) {
+            return ProceduralPreviewType.TREE;
+        }
+        var player = getEntrance().getClient().getPlayer();
+        var mode = getEntrance().getStructureBuilder()
+                .getContext(player).buildMode();
+        return ProceduralPreviewType.ALL.stream()
+                .filter(value -> !value.isClientOnly())
+                .filter(value -> value.stockMode() == mode)
+                .findFirst()
+                .orElse(ProceduralPreviewType.SINGLE);
+    }
+
+    private void selectBuildTool(ProceduralPreviewType value) {
+        previewType = value;
+        session.setActiveToolId(value.persistentId());
+        var player = getEntrance().getClient().getPlayer();
+        var manager = getEntrance().getClientManager();
+        manager.rememberActiveBuildTool(value.persistentId());
+        if (value.isRoad()) {
+            manager.getTreeEditor().cancel();
+            manager.getRoadEditor().start(
+                    session.selectedPreset().advanced().roadProfile()
+            );
+        } else if (value.isTree()) {
+            manager.getRoadEditor().cancel();
+            manager.getTreeEditor().start(
+                    session.selectedPreset().advanced().treeGeneration()
+            );
+        } else {
+            manager.getRoadEditor().cancel();
+            manager.getTreeEditor().cancel();
+            var structure = getEntrance().getConfigStorage()
+                    .getStructure(value.stockMode());
+            if (getEntrance().getStructureBuilder().setStructure(
+                    player, structure
+            )) {
+                getEntrance().getConfigStorage().setStructure(structure);
+            }
+        }
+        recreate();
+    }
+
+    private void addActiveToolInspector(int x, int y, int width) {
+        var active = activeBuildTool();
+        addWidget(new TextWidget(
+                getEntrance(),
+                x,
+                y + 4,
+                Text.text("FORM · ")
+                        .append(active.displayName())
+                        .withStyle(ChatFormatting.GOLD)
+        ));
+        y += 18;
+        if (active.isRoad()) {
+            addRoadInspector(x, y, width);
+            return;
+        }
+        if (active.isTree()) {
+            addTreeInspector(x, y, width);
+            return;
+        }
+        addWidget(new TextWidget(
+                getEntrance(), x, y + 4,
+                Text.text("Choose the type and its variants in the toolbar "
+                                + "above the live preview.")
+                        .withStyle(ChatFormatting.GRAY)
+        ));
     }
 
     private void addMaterialsInspector(int x, int y, int width) {
@@ -1646,82 +1696,44 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
     private void addGradientCenterOptions(
             ProceduralSettingOptionsList options
     ) {
-        options.addTripleRangeEntry(
+        options.addVectorEntry(
                 Text.text("Gradient center"),
-                Text.empty(),
-                List.of(
-                        () -> session.selectedPreset().advanced()
-                                .gradientField().centerX(),
-                        () -> session.selectedPreset().advanced()
-                                .gradientField().centerY(),
-                        () -> session.selectedPreset().advanced()
-                                .gradientField().centerZ()
-                ),
+                () -> {
+                    var value = session.selectedPreset().advanced()
+                            .gradientField();
+                    return new Vector3d(
+                            value.centerX(), value.centerY(), value.centerZ()
+                    );
+                },
                 -4.0,
                 4.0,
                 0.05,
                 false,
-                List.of(
-                        value -> updateGradientField(current ->
-                                current.withCenter(
-                                        value,
-                                        current.centerY(),
-                                        current.centerZ()
-                                )),
-                        value -> updateGradientField(current ->
-                                current.withCenter(
-                                        current.centerX(),
-                                        value,
-                                        current.centerZ()
-                                )),
-                        value -> updateGradientField(current ->
-                                current.withCenter(
-                                        current.centerX(),
-                                        current.centerY(),
-                                        value
-                                ))
-                )
+                value -> updateGradientField(current -> current.withCenter(
+                        value.x(), value.y(), value.z()
+                ))
         );
     }
 
     private void addGradientScaleOptions(
             ProceduralSettingOptionsList options
     ) {
-        options.addTripleRangeEntry(
+        options.addVectorEntry(
                 Text.text("Gradient scale"),
-                Text.empty(),
-                List.of(
-                        () -> session.selectedPreset().advanced()
-                                .gradientField().scaleX(),
-                        () -> session.selectedPreset().advanced()
-                                .gradientField().scaleY(),
-                        () -> session.selectedPreset().advanced()
-                                .gradientField().scaleZ()
-                ),
+                () -> {
+                    var value = session.selectedPreset().advanced()
+                            .gradientField();
+                    return new Vector3d(
+                            value.scaleX(), value.scaleY(), value.scaleZ()
+                    );
+                },
                 0.000001,
                 64.0,
                 0.05,
                 true,
-                List.of(
-                        value -> updateGradientField(current ->
-                                current.withScale(
-                                        value,
-                                        current.scaleY(),
-                                        current.scaleZ()
-                                )),
-                        value -> updateGradientField(current ->
-                                current.withScale(
-                                        current.scaleX(),
-                                        value,
-                                        current.scaleZ()
-                                )),
-                        value -> updateGradientField(current ->
-                                current.withScale(
-                                        current.scaleX(),
-                                        current.scaleY(),
-                                        value
-                                ))
-                )
+                value -> updateGradientField(current -> current.withScale(
+                        value.x(), value.y(), value.z()
+                ))
         );
     }
 
@@ -1770,8 +1782,8 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 ))
         );
         options.addSection(Text.text("TRANSFORM"));
-        addNoiseScaleOptions(options, noise);
-        addNoiseOffsetOptions(options, noise);
+        addNoiseScaleOptions(options);
+        addNoiseOffsetOptions(options);
         options.addRangeEntry(
                 Text.text("Noise rotation"),
                 Text.empty(),
@@ -1852,86 +1864,46 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
     }
 
     private void addNoiseScaleOptions(
-            ProceduralSettingOptionsList options,
-            ProceduralNoiseConfig noise
+            ProceduralSettingOptionsList options
     ) {
-        options.addTripleRangeEntry(
+        options.addVectorEntry(
                 Text.text("Noise scale"),
-                Text.empty(),
-                List.of(
-                        () -> session.selectedPreset().advanced()
-                                .noiseConfig().scaleX(),
-                        () -> session.selectedPreset().advanced()
-                                .noiseConfig().scaleY(),
-                        () -> session.selectedPreset().advanced()
-                                .noiseConfig().scaleZ()
-                ),
+                () -> {
+                    var value = session.selectedPreset().advanced()
+                            .noiseConfig();
+                    return new Vector3d(
+                            value.scaleX(), value.scaleY(), value.scaleZ()
+                    );
+                },
                 0.000001,
                 64.0,
                 0.05,
                 true,
-                List.of(
-                        value -> updateNoiseConfig(current ->
-                                current.withScale(
-                                        value,
-                                        current.scaleY(),
-                                        current.scaleZ()
-                                )),
-                        value -> updateNoiseConfig(current ->
-                                current.withScale(
-                                        current.scaleX(),
-                                        value,
-                                        current.scaleZ()
-                                )),
-                        value -> updateNoiseConfig(current ->
-                                current.withScale(
-                                        current.scaleX(),
-                                        current.scaleY(),
-                                        value
-                                ))
-                )
+                value -> updateNoiseConfig(current -> current.withScale(
+                        value.x(), value.y(), value.z()
+                ))
         );
     }
 
     private void addNoiseOffsetOptions(
-            ProceduralSettingOptionsList options,
-            ProceduralNoiseConfig noise
+            ProceduralSettingOptionsList options
     ) {
-        options.addTripleRangeEntry(
+        options.addVectorEntry(
                 Text.text("Noise offset"),
-                Text.empty(),
-                List.of(
-                        () -> session.selectedPreset().advanced()
-                                .noiseConfig().offsetX(),
-                        () -> session.selectedPreset().advanced()
-                                .noiseConfig().offsetY(),
-                        () -> session.selectedPreset().advanced()
-                                .noiseConfig().offsetZ()
-                ),
+                () -> {
+                    var value = session.selectedPreset().advanced()
+                            .noiseConfig();
+                    return new Vector3d(
+                            value.offsetX(), value.offsetY(), value.offsetZ()
+                    );
+                },
                 -1_000_000.0,
                 1_000_000.0,
                 0.1,
                 false,
-                List.of(
-                        value -> updateNoiseConfig(current ->
-                                current.withOffset(
-                                        value,
-                                        current.offsetY(),
-                                        current.offsetZ()
-                                )),
-                        value -> updateNoiseConfig(current ->
-                                current.withOffset(
-                                        current.offsetX(),
-                                        value,
-                                        current.offsetZ()
-                                )),
-                        value -> updateNoiseConfig(current ->
-                                current.withOffset(
-                                        current.offsetX(),
-                                        current.offsetY(),
-                                        value
-                                ))
-                )
+                value -> updateNoiseConfig(current -> current.withOffset(
+                        value.x(), value.y(), value.z()
+                ))
         );
     }
 
@@ -2430,7 +2402,6 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                         )
                 )
         );
-        addAdvancedTab(options);
     }
 
     private void addMasksInspector(int x, int y, int width) {
@@ -2487,7 +2458,442 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                         )
                 )
         );
-        addAdvancedTab(options);
+    }
+
+    /** Inline ordered scene graph; only the scalable recipe chooser is modal. */
+    private void addSceneInspector(int x, int y, int width) {
+        var layers = compositionLayers();
+        selectedCompositionIndex = layers.isEmpty()
+                ? 0
+                : Math.clamp(selectedCompositionIndex, 0, layers.size() - 1);
+        int small = Math.max(24, (width - GAP * 4) / 5);
+        addButton(x, y, small, Text.text("+ Layer"), button -> {
+            var changed = new ArrayList<>(compositionLayers());
+            changed.add(ProceduralCompositionLayer.defaultLayer());
+            selectedCompositionIndex = changed.size() - 1;
+            setCompositionLayers(changed);
+            recreate();
+        });
+        addButton(x + small + GAP, y, small, Text.text("Copy"), button -> {
+            var changed = new ArrayList<>(compositionLayers());
+            if (!changed.isEmpty()) {
+                var source = changed.get(selectedCompositionIndex);
+                int insertionIndex = selectedCompositionIndex + 1;
+                changed.add(
+                        insertionIndex,
+                        source.withName(source.name() + " copy")
+                );
+                if (soloCompositionIndex >= insertionIndex) {
+                    soloCompositionIndex++;
+                }
+                selectedCompositionIndex++;
+                setCompositionLayers(changed);
+                recreate();
+            }
+        });
+        addButton(x + (small + GAP) * 2, y, small, Text.text("Up"), button -> {
+            moveCompositionLayer(-1);
+            recreate();
+        });
+        addButton(x + (small + GAP) * 3, y, small, Text.text("Down"), button -> {
+            moveCompositionLayer(1);
+            recreate();
+        });
+        addButton(
+                x + (small + GAP) * 4, y,
+                width - (small + GAP) * 4,
+                Text.text("Delete"), button -> {
+                    var changed = new ArrayList<>(compositionLayers());
+                    if (!changed.isEmpty()) {
+                        int removedIndex = selectedCompositionIndex;
+                        changed.remove(removedIndex);
+                        if (soloCompositionIndex == removedIndex) {
+                            soloCompositionIndex = -1;
+                        } else if (soloCompositionIndex > removedIndex) {
+                            soloCompositionIndex--;
+                        }
+                        selectedCompositionIndex = Math.max(
+                                0, removedIndex - 1
+                        );
+                        setCompositionLayers(changed);
+                        recreate();
+                    }
+                }
+        );
+        y += BUTTON_HEIGHT + GAP;
+
+        if (!layers.isEmpty()) {
+            var selectedLayer = layers.get(selectedCompositionIndex);
+            int half = (width - GAP) / 2;
+            addButton(
+                    x, y, half,
+                    Text.text(selectedLayer.enabled() ? "Mute layer" : "Unmute layer"),
+                    button -> {
+                        updateCompositionLayer(current -> current.withEnabled(
+                                !current.enabled()
+                        ));
+                        recreate();
+                    }
+            );
+            addButton(
+                    x + half + GAP, y, width - half - GAP,
+                    Text.text(soloCompositionIndex == selectedCompositionIndex
+                            ? "Clear solo" : "Solo layer"),
+                    button -> {
+                        soloCompositionIndex = soloCompositionIndex
+                                == selectedCompositionIndex
+                                ? -1 : selectedCompositionIndex;
+                        recreate();
+                    }
+            );
+            y += BUTTON_HEIGHT + GAP;
+        }
+
+        int templateWidth = Math.max(36, (width - GAP * 2) / 3);
+        addButton(
+                x, y, templateWidth, Text.text("+ Tunnel"),
+                button -> {
+                    addTunnelTemplate();
+                    recreate();
+                }
+        );
+        addButton(
+                x + templateWidth + GAP, y,
+                templateWidth,
+                Text.text("+ Trees"), button -> {
+                    addRoadsideTreeTemplate();
+                    recreate();
+                }
+        );
+        addButton(
+                x + (templateWidth + GAP) * 2, y,
+                width - (templateWidth + GAP) * 2,
+                Text.text("+ Damage"), button -> {
+                    addRoadDamageTemplate();
+                    recreate();
+                }
+        );
+        y += BUTTON_HEIGHT + GAP;
+
+        layers = compositionLayers();
+        if (layers.isEmpty()) {
+            addWidget(new TextWidget(
+                    getEntrance(), x, y + 4,
+                    Text.text("No scene layers. Add geometry or a template.")
+                            .withStyle(ChatFormatting.GRAY)
+            ));
+            return;
+        }
+        selectedCompositionIndex = Math.clamp(
+                selectedCompositionIndex, 0, layers.size() - 1
+        );
+        final var layerChoices = layers;
+        var layer = layerChoices.get(selectedCompositionIndex);
+        int layerListHeight = Math.min(
+                92,
+                Math.max(56, (contentTop + contentHeight - y) / 5)
+        );
+        compositionList = addWidget(new TextRuleList<>(
+                getEntrance(), x, y, width - 8, layerListHeight,
+                ProceduralCompositionLayer::name,
+                value -> value.operation().name().toLowerCase()
+                        + " · " + value.generator().name().toLowerCase()
+                        + (value.enabled() ? "" : " · disabled")
+        ));
+        compositionList.setAlwaysShowScrollbar(true);
+        compositionList.reset(layerChoices);
+        compositionList.selectByIndex(selectedCompositionIndex);
+        y += layerListHeight + GAP;
+        int nameLabelWidth = Math.min(42, width / 4);
+        addWidget(new TextWidget(
+                getEntrance(), x, y + 6,
+                Text.text("Name").withStyle(ChatFormatting.GRAY)
+        ));
+        var layerName = addWidget(new ReliableEditBox(
+                getEntrance(), x + nameLabelWidth, y,
+                width - nameLabelWidth, BUTTON_HEIGHT,
+                Text.text("Scene layer name")
+        ));
+        layerName.setMaxLength(80);
+        layerName.setValue(layer.name());
+        layerName.setChangeListener(value ->
+                updateCompositionLayer(current -> current.withName(value))
+        );
+        y += BUTTON_HEIGHT + GAP;
+        var options = addOptions(
+                x, y, width,
+                contentTop + contentHeight - y - GAP
+        );
+        options.addSwitchEntry(
+                Text.text("Enabled"),
+                Text.translate("effortless.tooltip.composition.enabled"),
+                layer.enabled(),
+                value -> updateCompositionLayer(current ->
+                        current.withEnabled(value))
+        );
+        options.addSelectorEntry(
+                Text.text("Boolean operation"),
+                Text.translate("effortless.tooltip.composition.operation"),
+                labels(ProceduralCompositionLayer.Operation.values()),
+                List.of(ProceduralCompositionLayer.Operation.values()),
+                layer.operation(),
+                value -> updateCompositionLayer(current ->
+                        current.withOperation(value))
+        );
+        options.addSelectorEntry(
+                Text.text("Generator"),
+                Text.translate("effortless.tooltip.composition.generator"),
+                labels(ProceduralCompositionLayer.Generator.values()),
+                List.of(ProceduralCompositionLayer.Generator.values()),
+                layer.generator(),
+                value -> updateCompositionLayer(current ->
+                        current.withGenerator(value))
+        );
+        options.addSelectorEntry(
+                Text.text("Anchor"),
+                Text.translate("effortless.tooltip.composition.anchor"),
+                labels(ProceduralCompositionLayer.Anchor.values()),
+                List.of(ProceduralCompositionLayer.Anchor.values()),
+                layer.anchor(),
+                value -> updateCompositionLayer(current ->
+                        current.withAnchor(value))
+        );
+        options.addSelectorEntry(
+                Text.text("Shape"),
+                Text.translate("effortless.tooltip.composition.shape"),
+                labels(ProceduralCompositionLayer.Primitive.values()),
+                List.of(ProceduralCompositionLayer.Primitive.values()),
+                layer.primitive(),
+                value -> updateCompositionLayer(current ->
+                        current.withPrimitive(value))
+        );
+        options.addTab(
+                Text.text("Material / tree recipe"),
+                Text.translate("effortless.tooltip.composition.recipe"),
+                layer.presetId(),
+                value -> updateCompositionLayer(current ->
+                        current.withPresetId(value)),
+                (entry, value) -> {
+                    entry.getButton().setMessage(
+                            Text.text(compositionRecipeName(value))
+                    );
+                    entry.getButton().setOnPressListener(button ->
+                            new EffortlessRecipePickerScreen(
+                                    getEntrance(), "scene layer",
+                                    session.library(),
+                                    session.selectedPresetId(), value,
+                                    entry::setItem
+                            ).attach()
+                    );
+                }
+        );
+        options.addSection(Text.text("LOCAL TRANSFORM"));
+        addCompositionNumber(
+                options, "Offset X (sideways)",
+                "effortless.tooltip.composition.offset",
+                layer.offsetX(), -4096.0, 4096.0, 0.5,
+                value -> updateCompositionLayer(current ->
+                        current.withOffsetX(value))
+        );
+        addCompositionNumber(
+                options, "Offset Y (vertical)",
+                "effortless.tooltip.composition.offset",
+                layer.offsetY(), -4096.0, 4096.0, 0.5,
+                value -> updateCompositionLayer(current ->
+                        current.withOffsetY(value))
+        );
+        addCompositionNumber(
+                options, "Offset Z (forward)",
+                "effortless.tooltip.composition.offset",
+                layer.offsetZ(), -4096.0, 4096.0, 0.5,
+                value -> updateCompositionLayer(current ->
+                        current.withOffsetZ(value))
+        );
+        addCompositionInteger(
+                options, "Size X", "effortless.tooltip.composition.size",
+                layer.sizeX(), 1, 4096,
+                value -> updateCompositionLayer(current ->
+                        current.withSizeX(value))
+        );
+        addCompositionInteger(
+                options, "Size Y", "effortless.tooltip.composition.size",
+                layer.sizeY(), 1, 4096,
+                value -> updateCompositionLayer(current ->
+                        current.withSizeY(value))
+        );
+        addCompositionInteger(
+                options, "Size Z", "effortless.tooltip.composition.size",
+                layer.sizeZ(), 1, 4096,
+                value -> updateCompositionLayer(current ->
+                        current.withSizeZ(value))
+        );
+        addCompositionNumber(
+                options, "Rotation",
+                "effortless.tooltip.composition.rotation",
+                layer.rotationDegrees(),
+                -360.0, 360.0, 5.0,
+                value -> updateCompositionLayer(current ->
+                        current.withRotation(value))
+        );
+        options.addSwitchEntry(
+                Text.text("Hollow shell"),
+                Text.translate("effortless.tooltip.composition.hollow"),
+                layer.hollow(),
+                value -> updateCompositionLayer(current ->
+                        current.withHollow(value))
+        );
+        addCompositionInteger(
+                options, "Shell thickness",
+                "effortless.tooltip.composition.shell",
+                layer.shellThickness(),
+                1, 4096,
+                value -> updateCompositionLayer(current ->
+                        current.withShellThickness(value))
+        );
+        options.addSection(Text.text("PATH REPEAT"));
+        addCompositionNumber(
+                options, "Spacing",
+                "effortless.tooltip.composition.spacing",
+                layer.spacing(),
+                0.5, 4096.0, 0.5,
+                value -> updateCompositionLayer(current ->
+                        current.withSpacing(value))
+        );
+        addCompositionInteger(
+                options, "Maximum instances",
+                "effortless.tooltip.composition.instances",
+                layer.maximumInstances(),
+                1, 4096,
+                value -> updateCompositionLayer(current ->
+                        current.withMaximumInstances(value))
+        );
+        options.addSwitchEntry(
+                Text.text("Safe variation"),
+                Text.translate("effortless.tooltip.composition.variation"),
+                layer.safeVariation(),
+                value -> updateCompositionLayer(current ->
+                        current.withSafeVariation(value))
+        );
+    }
+
+    private void addCompositionNumber(
+            ProceduralSettingOptionsList options,
+            String title,
+            String tooltipKey,
+            double value,
+            double minimum,
+            double maximum,
+            double step,
+            java.util.function.Consumer<Double> consumer
+    ) {
+        options.addNumberEntry(
+                Text.text(title),
+                Text.translate(tooltipKey),
+                value, minimum, maximum, step, consumer
+        );
+    }
+
+    private void addCompositionInteger(
+            ProceduralSettingOptionsList options,
+            String title,
+            String tooltipKey,
+            int value,
+            int minimum,
+            int maximum,
+            java.util.function.Consumer<Integer> consumer
+    ) {
+        options.addIntegerEntry(
+                Text.text(title),
+                Text.translate(tooltipKey),
+                value, minimum, maximum, consumer
+        );
+    }
+
+    private List<ProceduralCompositionLayer> compositionLayers() {
+        return session.selectedPreset().advanced().compositionLayers();
+    }
+
+    private void setCompositionLayers(
+            List<ProceduralCompositionLayer> value
+    ) {
+        session.replaceSelected(current -> current.withAdvanced(
+                current.advanced().withCompositionLayers(value)
+        ));
+    }
+
+    private void updateCompositionLayer(
+            java.util.function.UnaryOperator<ProceduralCompositionLayer>
+                    operation
+    ) {
+        var changed = new ArrayList<>(compositionLayers());
+        if (changed.isEmpty()) {
+            return;
+        }
+        int index = Math.clamp(
+                selectedCompositionIndex, 0, changed.size() - 1
+        );
+        changed.set(index, operation.apply(changed.get(index)));
+        setCompositionLayers(changed);
+    }
+
+    private void moveCompositionLayer(int direction) {
+        var changed = new ArrayList<>(compositionLayers());
+        if (changed.size() < 2) {
+            return;
+        }
+        int from = Math.clamp(
+                selectedCompositionIndex, 0, changed.size() - 1
+        );
+        int to = Math.clamp(from + direction, 0, changed.size() - 1);
+        if (from == to) {
+            return;
+        }
+        var value = changed.remove(from);
+        changed.add(to, value);
+        if (soloCompositionIndex == from) {
+            soloCompositionIndex = to;
+        } else if (soloCompositionIndex == to) {
+            soloCompositionIndex = from;
+        }
+        selectedCompositionIndex = to;
+        setCompositionLayers(changed);
+    }
+
+    private void addTunnelTemplate() {
+        var changed = new ArrayList<>(compositionLayers());
+        changed.addAll(ProceduralCompositionTemplates.tunnelShell());
+        selectedCompositionIndex = changed.size() - 1;
+        setCompositionLayers(changed);
+    }
+
+    private void addRoadsideTreeTemplate() {
+        var changed = new ArrayList<>(compositionLayers());
+        changed.addAll(ProceduralCompositionTemplates.roadsideTrees());
+        selectedCompositionIndex = changed.size() - 1;
+        setCompositionLayers(changed);
+    }
+
+    private void addRoadDamageTemplate() {
+        var changed = new ArrayList<>(compositionLayers());
+        changed.addAll(ProceduralCompositionTemplates.roadDamage());
+        selectedCompositionIndex = changed.size() - 1;
+        setCompositionLayers(changed);
+    }
+
+    private String compositionRecipeName(String presetId) {
+        if (presetId == null || presetId.isBlank()) {
+            return "Current recipe";
+        }
+        try {
+            var id = UUID.fromString(presetId);
+            return session.library().presets().stream()
+                    .filter(value -> value.id().equals(id))
+                    .map(ProceduralPatternPreset::name)
+                    .findFirst()
+                    .orElse("Missing recipe");
+        } catch (IllegalArgumentException exception) {
+            return "Invalid recipe";
+        }
     }
 
     private void addTransformsInspector(int x, int y, int width) {
@@ -2611,7 +3017,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 x,
                 y,
                 width,
-                Text.text("Import active stock pattern"),
+                Text.text("Import active stock recipe"),
                 button -> {
                     var player = getEntrance().getClient().getPlayer();
                     session.importStockPattern(
@@ -2854,23 +3260,55 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 width,
                 contentTop + contentHeight - y - GAP
         );
-        var player = getEntrance().getClient().getPlayer();
-        var currentMode = getEntrance().getStructureBuilder()
-                .getContext(player)
-                .buildMode();
-        options.addSelectorEntry(
-                Text.text("Active build tool"),
-                Text.empty(),
-                compactLayout
-                        ? compactBuildModeLabels()
-                        : labels(BuildMode.values()),
-                List.of(BuildMode.values()),
-                currentMode,
-                value -> getEntrance().getStructureBuilder().setStructure(
-                        player,
-                        getEntrance().getConfigStorage().getStructure(value)
+        options.addSection(Text.text("RECIPE INHERITANCE"));
+        options.addTab(
+                Text.text("Parent recipe"),
+                Text.text("Reuse another recipe without copying it."),
+                preset.advanced().parentPresetId(),
+                value -> session.replaceSelected(current ->
+                        current.withAdvanced(current.advanced().withParent(
+                                value,
+                                current.advanced().inheritBlocks(),
+                                current.advanced().inheritRules()
+                        ))
+                ),
+                (entry, value) -> {
+                    entry.getButton().setMessage(
+                            Text.text(compositionRecipeName(value))
+                    );
+                    entry.getButton().setOnPressListener(button ->
+                            new EffortlessRecipePickerScreen(
+                                    getEntrance(), "parent",
+                                    session.library(),
+                                    session.selectedPresetId(), value,
+                                    entry::setItem
+                            ).attach()
+                    );
+                }
+        );
+        options.addSwitchEntry(
+                Text.text("Inherit parent blocks"), Text.empty(),
+                preset.advanced().inheritBlocks(),
+                value -> session.replaceSelected(current ->
+                        current.withAdvanced(current.advanced().withParent(
+                                current.advanced().parentPresetId(),
+                                value,
+                                current.advanced().inheritRules()
+                        ))
                 )
         );
+        options.addSwitchEntry(
+                Text.text("Inherit parent rules"), Text.empty(),
+                preset.advanced().inheritRules(),
+                value -> session.replaceSelected(current ->
+                        current.withAdvanced(current.advanced().withParent(
+                                current.advanced().parentPresetId(),
+                                current.advanced().inheritBlocks(),
+                                value
+                        ))
+                )
+        );
+        options.addSection(Text.text("POST PROCESS"));
         options.addIntegerEntry(
                 Text.text("Cleanup passes"),
                 Text.empty(),
@@ -2904,7 +3342,6 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                         )
                 )
         );
-        addAdvancedTab(options);
     }
 
     private void addRoadInspector(int x, int y, int width) {
@@ -2931,18 +3368,6 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 y,
                 width,
                 contentTop + contentHeight - y - GAP
-        );
-        options.addSection(Text.text("PROFILE"));
-        options.addSelectorEntry(
-                Text.text("Spline subtype"),
-                Text.empty(),
-                splineSubtypeLabels(),
-                List.of(SplineSubtype.values()),
-                profile.subtype(),
-                value -> {
-                    updateRoadProfile(current -> current.withSubtype(value));
-                    recreate();
-                }
         );
         options.addSection(Text.text("CROSS-SECTION"));
         options.addIntegerEntry(
@@ -3139,25 +3564,6 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                 width,
                 contentTop + contentHeight - y - GAP
         );
-        options.addSection(Text.translate(
-                "effortless.procedural.tree.section.workflow"
-        ));
-        options.addSelectorEntry(
-                Text.translate("effortless.procedural.tree.archetype"),
-                Text.empty(),
-                treeArchetypeLabels(),
-                List.of(TreeArchetype.values()),
-                tree.archetype(),
-                value -> {
-                    updateTreeGeneration(current ->
-                            current.withArchetype(value));
-                    // An archetype replaces the complete form defaults, not
-                    // just the selected label. Rebuild the inspector so all
-                    // dependent ranges immediately show their new values.
-                    recreate();
-                }
-        );
-
         options.addSection(Text.translate(
                 "effortless.procedural.tree.section.variation"
         ));
@@ -3407,32 +3813,6 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
         previewTreeArchetype = advanced.treeGeneration().archetype();
     }
 
-    private void addAdvancedTab(ProceduralSettingOptionsList options) {
-        var preset = session.selectedPreset();
-        options.addTab(
-                Text.text("Advanced rules, masks and composition"),
-                Text.empty(),
-                preset.advanced(),
-                value -> session.replaceSelected(
-                        current -> current.withAdvanced(value)
-                ),
-                (entry, value) -> {
-                    entry.getButton().setMessage(
-                            Text.text(advancedRuleCount(value) + " entries")
-                    );
-                    entry.getButton().setOnPressListener(button ->
-                            new EffortlessAdvancedProceduralSettingsScreen(
-                                    getEntrance(),
-                                    entry::setItem,
-                                    session.selectedPreset().advanced(),
-                                    session.library().presets(),
-                                    session.selectedPresetId()
-                            ).attach()
-                    );
-                }
-        );
-    }
-
     private ProceduralSettingOptionsList addOptions(
             int x,
             int y,
@@ -3499,13 +3879,36 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                     recreate();
                 }
         );
-        draftStatusWidget = addWidget(new TextWidget(
-                getEntrance(),
-                getScreenWidth() / 2,
-                y + 6,
-                Text.empty(),
-                TextWidget.Gravity.CENTER
-        ));
+        addButton(
+                margin + GAP + (buttonWidth + GAP) * 3,
+                y,
+                buttonWidth,
+                Text.text("Clipboard"),
+                button -> new EffortlessWorkbenchClipboardScreen(
+                        getEntrance()
+                ).attach()
+        );
+        addButton(
+                margin + GAP + (buttonWidth + GAP) * 4,
+                y,
+                buttonWidth,
+                Text.text("Settings"),
+                button -> new EffortlessWorkbenchSettingsScreen(
+                        getEntrance()
+                ).attach()
+        );
+        if (!compactLayout) {
+            int statusLeft = margin + GAP + (buttonWidth + GAP) * 5;
+            int statusRight = getScreenWidth() - margin - GAP
+                    - (buttonWidth + GAP) * 3;
+            draftStatusWidget = addWidget(new TextWidget(
+                    getEntrance(),
+                    (statusLeft + statusRight) / 2,
+                    y + 6,
+                    Text.empty(),
+                    TextWidget.Gravity.CENTER
+            ));
+        }
         addButton(
                 getScreenWidth() - margin - GAP
                         - (buttonWidth + GAP) * 3,
@@ -3712,14 +4115,14 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                     .orElse("none");
             message(
                     "Saved " + materialized.presets().size()
-                            + " patterns; active: " + active,
+                            + " recipes; active: " + active,
                     ChatFormatting.GREEN
             );
             allowDetach = true;
             detach();
         } catch (IllegalArgumentException exception) {
             message(
-                    "Pattern: " + exception.getMessage(),
+                    "Recipe: " + exception.getMessage(),
                     ChatFormatting.RED
             );
         }
@@ -3744,10 +4147,10 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
         try {
             var path = getEntrance().getProceduralConfigStorage()
                     .exportLibrary(session.materialize());
-            message("Exported pattern library to " + path, ChatFormatting.GREEN);
+            message("Exported recipe library to " + path, ChatFormatting.GREEN);
         } catch (IOException | IllegalArgumentException exception) {
             message(
-                    "Could not export pattern library: "
+                    "Could not export recipe library: "
                             + exception.getMessage(),
                     ChatFormatting.RED
             );
@@ -3761,14 +4164,14 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
             session.replaceLibrary(imported.library());
             selectedBlockIndex = 0;
             message(
-                    "Imported pattern library from " + imported.path()
+                    "Imported recipe library from " + imported.path()
                             + " (press Save to keep them)",
                     ChatFormatting.GREEN
             );
             recreate();
         } catch (IOException | RuntimeException exception) {
             message(
-                    "Could not import pattern library: "
+                    "Could not import recipe library: "
                             + exception.getMessage(),
                     ChatFormatting.RED
             );
@@ -3779,11 +4182,11 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
         return Text.text(
                 compactLayout
                         ? (session.library().enabled()
-                                ? "Patterns: on"
-                                : "Patterns: off")
+                                ? "Recipes: on"
+                                : "Recipes: off")
                         : (session.library().enabled()
-                                ? "Patterns: enabled"
-                                : "Patterns: disabled")
+                                ? "Recipes: enabled"
+                                : "Recipes: disabled")
         );
     }
 
@@ -3847,15 +4250,6 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
         );
     }
 
-    private static int advancedRuleCount(ProceduralAdvancedConfig value) {
-        return value.maskLayers().size()
-                + value.directionalRules().size()
-                + value.spacingRules().size()
-                + value.neighborCountRules().size()
-                + value.quotaRules().size()
-                + value.cleanupRules().size();
-    }
-
     private static void renderWorkbenchPanel(
             Renderer renderer,
             int x,
@@ -3881,50 +4275,6 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
                         value.name().toLowerCase().replace('_', ' ')
                 ))
                 .toList();
-    }
-
-    private static List<Text> treeArchetypeLabels() {
-        return Arrays.stream(TreeArchetype.values())
-                .map(value -> Text.text(switch (value) {
-                    case GIANT_FANTASY -> "fantasy";
-                    default -> value.name().toLowerCase().replace('_', ' ');
-                }))
-                .toList();
-    }
-
-    private static List<Text> splineSubtypeLabels() {
-        return Arrays.stream(SplineSubtype.values())
-                .map(value -> Text.text(switch (value) {
-                    case PATH -> "path";
-                    case FLAT_ROAD -> "flat";
-                    case CROWNED_ROAD -> "crown";
-                    case BANKED_ROAD -> "bank";
-                    case EMBANKMENT -> "fill";
-                    case TRENCH -> "trench";
-                    case BRIDGE_DECK -> "bridge";
-                    case RAIL_BED -> "rail";
-                    case CUSTOM -> "custom";
-                }))
-                .toList();
-    }
-
-    private static List<Text> compactBuildModeLabels() {
-        return List.of(
-                Text.text("off"),
-                Text.text("single"),
-                Text.text("line"),
-                Text.text("wall"),
-                Text.text("floor"),
-                Text.text("cuboid"),
-                Text.text("diag line"),
-                Text.text("diag wall"),
-                Text.text("slope"),
-                Text.text("circle"),
-                Text.text("cylinder"),
-                Text.text("sphere"),
-                Text.text("pyramid"),
-                Text.text("cone")
-        );
     }
 
     private static boolean isLongInput(String value) {
@@ -3978,14 +4328,182 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
         };
     }
 
-    private enum InspectorTab {
+    private void openCommandPalette() {
+        new EffortlessWorkbenchCommandPaletteScreen(
+                getEntrance(), workbenchCommands()
+        ).attach();
+    }
+
+    private List<EffortlessWorkbenchCommandPaletteScreen.Command>
+            workbenchCommands() {
+        var commands = new ArrayList<
+                EffortlessWorkbenchCommandPaletteScreen.Command>();
+        for (var tab : InspectorTab.values()) {
+            commands.add(new EffortlessWorkbenchCommandPaletteScreen.Command(
+                    "Open " + tab.title(),
+                    "Workspace panel",
+                    () -> showPanel(tab)
+            ));
+        }
+        for (var type : ProceduralPreviewType.ALL) {
+            commands.add(new EffortlessWorkbenchCommandPaletteScreen.Command(
+                    "Use " + type.displayName().getString(),
+                    "Build tool",
+                    () -> selectPreviewTool(type)
+            ));
+        }
+        commands.add(new EffortlessWorkbenchCommandPaletteScreen.Command(
+                "New recipe", "Recipe action", () -> {
+                    session.addPreset();
+                    presetSearch = "";
+                    resetSelectedRecipeUi();
+                    recreate();
+                }
+        ));
+        commands.add(new EffortlessWorkbenchCommandPaletteScreen.Command(
+                "Duplicate recipe", "Recipe action",
+                this::duplicateSelectedRecipe
+        ));
+        commands.add(new EffortlessWorkbenchCommandPaletteScreen.Command(
+                "Activate recipe", "Recipe action", () -> {
+                    session.useSelected();
+                    recreate();
+                }
+        ));
+        commands.add(new EffortlessWorkbenchCommandPaletteScreen.Command(
+                "Save library", "Ctrl+S", this::saveLibrary
+        ));
+        commands.add(new EffortlessWorkbenchCommandPaletteScreen.Command(
+                "Undo", "Ctrl+Z", () -> {
+                    session.undo();
+                    recreate();
+                }
+        ));
+        commands.add(new EffortlessWorkbenchCommandPaletteScreen.Command(
+                "Redo", "Ctrl+Y", () -> {
+                    session.redo();
+                    recreate();
+                }
+        ));
+        return List.copyOf(commands);
+    }
+
+    private void showPanel(InspectorTab tab) {
+        inspectorTab = tab;
+        compactView = switch (tab) {
+            case FORM -> CompactView.FORM;
+            case MATERIALS -> CompactView.PALETTE;
+            case GRADIENT -> CompactView.GRADIENT;
+            case NOISE -> CompactView.NOISE;
+            case RULES -> CompactView.RULES;
+            case MASKS -> CompactView.MASKS;
+            case SCENE -> CompactView.SCENE;
+            case TRANSFORMS -> CompactView.TRANSFORMS;
+            case OUTPUT -> CompactView.OUTPUT;
+        };
+        recreate();
+    }
+
+    private void selectPreviewTool(ProceduralPreviewType type) {
+        previewType = type;
+        previewOrientation = PreviewOrientation.defaultFor(type);
+        previewSubtypesExpanded = type.hasSubtypes();
+        selectBuildTool(type);
+    }
+
+    private ProceduralPatternPreset previewPreset() {
+        var preset = session.selectedPreset();
+        var layers = preset.advanced().compositionLayers();
+        if (soloCompositionIndex < 0 || soloCompositionIndex >= layers.size()) {
+            return preset;
+        }
+        var previewLayers = new ArrayList<ProceduralCompositionLayer>(
+                layers.size()
+        );
+        for (int index = 0; index < layers.size(); index++) {
+            previewLayers.add(layers.get(index).withEnabled(
+                    index == soloCompositionIndex
+            ));
+        }
+        return preset.withAdvanced(
+                preset.advanced().withCompositionLayers(previewLayers)
+        );
+    }
+
+    private void duplicateSelectedRecipe() {
+        session.duplicateSelected();
+        presetSearch = "";
+        resetSelectedRecipeUi();
+        recreate();
+    }
+
+    private void resetSelectedRecipeUi() {
+        selectedBlockIndex = 0;
+        selectedCompositionIndex = 0;
+        soloCompositionIndex = -1;
+        syncPreviewSubtypesFromRecipe();
+    }
+
+    private <T extends Enum<T> & PanelDescriptor> int addPanelTabs(
+            int x,
+            int y,
+            int width,
+            T[] tabs,
+            Supplier<T> selected,
+            Consumer<T> select
+    ) {
+        int columns = width < 240 ? 4 : width < 420 ? 5 : tabs.length;
+        int rows = (tabs.length + columns - 1) / columns;
+        int tabWidth = Math.max(
+                1, (width - GAP * (columns - 1)) / columns
+        );
+        for (int index = 0; index < tabs.length; index++) {
+            var tab = tabs[index];
+            int column = index % columns;
+            int row = index / columns;
+            int tabX = x + column * (tabWidth + GAP);
+            int actualWidth = column == columns - 1
+                    ? x + width - tabX : tabWidth;
+            addWidget(new WorkbenchToolTab(
+                    getEntrance(),
+                    tabX,
+                    y + row * (BUTTON_HEIGHT + GAP),
+                    actualWidth,
+                    BUTTON_HEIGHT,
+                    Text.text(tab.label()),
+                    Text.text(tab.title()),
+                    Text.translate(
+                            "effortless.procedural.tooltip.tab." + tab.key()
+                    ),
+                    tab.accent(),
+                    () -> selected.get() == tab,
+                    () -> {
+                        select.accept(tab);
+                        recreate();
+                    }
+            ));
+        }
+        return y + rows * (BUTTON_HEIGHT + GAP);
+    }
+
+    private interface PanelDescriptor {
+        String label();
+
+        String title();
+
+        String key();
+
+        int accent();
+    }
+
+    private enum InspectorTab implements PanelDescriptor {
+        FORM("Form", "Form settings", "form", 0xFF6B959E),
         MATERIALS("Mat", "Materials", "materials", 0xFF6B8EA4),
         GRADIENT("Grad", "Gradient", "gradient", 0xFFA18450),
         NOISE("Noise", "Noise", "noise", 0xFF84709D),
         RULES("Rules", "Rules", "rules", 0xFFA66F6F),
         MASKS("Masks", "Masks", "masks", 0xFF61978E),
-        ROAD("Spline", "Splines", "road", 0xFF7796A0),
-        TREE("Tree", "Trees", "tree", 0xFF669369),
+        SCENE("Scene", "Scene stack", "scene", 0xFF6D9484),
         TRANSFORMS("Geo", "Geometry", "geometry", 0xFF738E70),
         OUTPUT("Out", "Output", "output", 0xFF858B92);
 
@@ -4000,9 +4518,30 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
             this.key = key;
             this.accent = accent;
         }
+
+        @Override
+        public String label() {
+            return label;
+        }
+
+        @Override
+        public String title() {
+            return title;
+        }
+
+        @Override
+        public String key() {
+            return key;
+        }
+
+        @Override
+        public int accent() {
+            return accent;
+        }
     }
 
-    private enum CompactView {
+    private enum CompactView implements PanelDescriptor {
+        FORM("Form", "Form settings", "form", 0xFF6B959E),
         PALETTE("Mat", "Palette", "materials", 0xFF6B8EA4),
         PREVIEW("View", "Preview", "preview", 0xFF6B959E),
         TUNE("Tune", "Material tuning", "tuning", 0xFF748EAC),
@@ -4011,8 +4550,7 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
         NOISE("Noise", "Noise", "noise", 0xFF84709D),
         RULES("Rules", "Rules", "rules", 0xFFA66F6F),
         MASKS("Masks", "Masks", "masks", 0xFF61978E),
-        ROAD("Spline", "Splines", "road", 0xFF7796A0),
-        TREE("Tree", "Trees", "tree", 0xFF669369),
+        SCENE("Scene", "Scene stack", "scene", 0xFF6D9484),
         TRANSFORMS("Geo", "Geometry", "geometry", 0xFF738E70),
         OUTPUT("Out", "Output", "output", 0xFF858B92);
 
@@ -4026,6 +4564,26 @@ public final class EffortlessProceduralPatternScreen extends EffortlessScreen {
             this.title = title;
             this.key = key;
             this.accent = accent;
+        }
+
+        @Override
+        public String label() {
+            return label;
+        }
+
+        @Override
+        public String title() {
+            return title;
+        }
+
+        @Override
+        public String key() {
+            return key;
+        }
+
+        @Override
+        public int accent() {
+            return accent;
         }
     }
 

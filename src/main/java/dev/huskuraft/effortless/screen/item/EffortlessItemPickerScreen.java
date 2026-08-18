@@ -12,7 +12,6 @@ import dev.huskuraft.universal.api.core.ItemStack;
 import dev.huskuraft.universal.api.core.Items;
 import dev.huskuraft.universal.api.gui.AbstractPanelScreen;
 import dev.huskuraft.universal.api.gui.button.Button;
-import dev.huskuraft.universal.api.gui.input.EditBox;
 import dev.huskuraft.universal.api.gui.text.TextWidget;
 import dev.huskuraft.universal.api.platform.ClientContentFactory;
 import dev.huskuraft.universal.api.platform.Entrance;
@@ -20,14 +19,16 @@ import dev.huskuraft.universal.api.platform.SearchBy;
 import dev.huskuraft.universal.api.platform.SearchTree;
 import dev.huskuraft.universal.api.text.Text;
 import dev.huskuraft.effortless.building.pattern.randomize.ItemRandomizer;
+import dev.huskuraft.effortless.screen.pattern.procedural.EffortlessProceduralScreen;
+import dev.huskuraft.effortless.screen.pattern.procedural.ReliableEditBox;
 
-public class EffortlessItemPickerScreen extends AbstractPanelScreen {
+public class EffortlessItemPickerScreen extends EffortlessProceduralScreen {
 
     private final Predicate<Item> filter;
     protected final Consumer<Item> consumer;
     protected TextWidget titleTextWidget;
     protected ItemStackList entries;
-    protected EditBox searchEditBox;
+    protected ReliableEditBox searchEditBox;
     protected Button addButton;
     protected Button cancelButton;
     private List<ItemStack> registryItems = List.of();
@@ -63,13 +64,11 @@ public class EffortlessItemPickerScreen extends AbstractPanelScreen {
         this.titleTextWidget = addWidget(new TextWidget(getEntrance(), getLeft() + getWidth() / 2, getTop() + PANEL_TITLE_HEIGHT_1 - 10, getScreenTitle().withColor(AbstractPanelScreen.TITLE_COLOR), TextWidget.Gravity.CENTER));
 
         this.searchEditBox = addWidget(
-                new EditBox(getEntrance(), getLeft() + PADDINGS_H, getTop() + PANEL_TITLE_HEIGHT_1, getWidth() - PADDINGS_H * 2, PANEL_TITLE_HEIGHT_2 - Button.COMPAT_SPACING_V, Text.translate("effortless.item.picker.search"))
+                new ReliableEditBox(getEntrance(), getLeft() + PADDINGS_H, getTop() + PANEL_TITLE_HEIGHT_1, getWidth() - PADDINGS_H * 2, PANEL_TITLE_HEIGHT_2 - Button.COMPAT_SPACING_V, Text.translate("effortless.item.picker.search"))
         );
         this.searchEditBox.setMaxLength(ItemRandomizer.MAX_NAME_LENGTH);
         this.searchEditBox.setHint(Text.translate("effortless.item.picker.search_hint"));
-        this.searchEditBox.setResponder(text -> {
-            setSearchResult(text);
-        });
+        this.searchEditBox.setChangeListener(this::setSearchResult);
 
         this.entries = addWidget(new ItemStackList(getEntrance(), getLeft() + PADDINGS_H, getTop() + PANEL_TITLE_HEIGHT_1 + PANEL_TITLE_HEIGHT_2, getWidth() - PADDINGS_H * 2 - 8, getHeight() - PANEL_TITLE_HEIGHT_1 - PANEL_TITLE_HEIGHT_2 - PANEL_BUTTON_ROW_HEIGHT_1));
         this.registryItems = suppliedItems == null

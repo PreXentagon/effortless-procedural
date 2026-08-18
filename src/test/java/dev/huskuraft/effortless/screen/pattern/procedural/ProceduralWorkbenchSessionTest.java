@@ -124,6 +124,24 @@ class ProceduralWorkbenchSessionTest {
     }
 
     @Test
+    void persistedToolSelectionIsNotAnUndoableRecipeEdit() {
+        var session = new ProceduralWorkbenchSession(
+                ProceduralPatternLibrary.DEFAULT
+        );
+
+        session.setActiveToolId("road");
+
+        assertEquals("road", session.library().activeToolId());
+        assertFalse(session.isDirty());
+        assertFalse(session.canUndo());
+
+        session.setMaterialSource(PatternMaterialSource.HOTBAR);
+        session.undo();
+        assertEquals("road", session.library().activeToolId());
+        assertFalse(session.isDirty());
+    }
+
+    @Test
     void undoRedoAndSavedMarkerCoverWorkbenchMutations() {
         var session = new ProceduralWorkbenchSession(
                 ProceduralPatternLibrary.DEFAULT

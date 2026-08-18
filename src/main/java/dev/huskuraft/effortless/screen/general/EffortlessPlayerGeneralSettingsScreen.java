@@ -19,8 +19,9 @@ import dev.huskuraft.effortless.screen.item.EffortlessItemsScreen;
 import dev.huskuraft.effortless.screen.player.PlayerInfoList;
 import dev.huskuraft.effortless.screen.settings.SettingOptionsList;
 import dev.huskuraft.effortless.session.config.ConstraintConfig;
+import dev.huskuraft.effortless.screen.pattern.procedural.EffortlessProceduralScreen;
 
-public class EffortlessPlayerGeneralSettingsScreen extends AbstractPanelScreen {
+public class EffortlessPlayerGeneralSettingsScreen extends EffortlessProceduralScreen {
 
     private final PlayerInfo playerInfo;
     private final BiConsumer<PlayerInfo, ConstraintConfig> consumer;

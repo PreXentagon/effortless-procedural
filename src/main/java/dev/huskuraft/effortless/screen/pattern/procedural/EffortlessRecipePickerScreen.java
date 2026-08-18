@@ -33,14 +33,14 @@ final class EffortlessRecipePickerScreen extends EffortlessProceduralScreen {
     ) {
         super(
                 entrance,
-                Text.text("Choose " + role + " pattern"),
+                Text.text("Choose " + role + " recipe"),
                 PANEL_WIDTH_60,
                 PANEL_HEIGHT_FULL
         );
         this.consumer = consumer;
         this.original = selected == null ? "" : selected;
         var values = new ArrayList<Choice>();
-        values.add(new Choice("", "Use main pattern", "No linked recipe"));
+        values.add(new Choice("", "Use main recipe", "No linked recipe"));
         for (var preset : library.presets()) {
             if (preset.id().equals(currentPreset)) {
                 continue;
@@ -65,7 +65,7 @@ final class EffortlessRecipePickerScreen extends EffortlessProceduralScreen {
                 getEntrance(), getLeft() + PADDINGS_H,
                 getTop() + PANEL_TITLE_HEIGHT_1,
                 getWidth() - PADDINGS_H * 2,
-                20, Text.text("Search patterns")
+                20, Text.text("Search recipes")
         ));
         search.setMaxLength(80);
         search.setChangeListener(ignored -> refreshEntries());

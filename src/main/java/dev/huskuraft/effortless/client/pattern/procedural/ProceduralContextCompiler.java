@@ -2,9 +2,14 @@ package dev.huskuraft.effortless.client.pattern.procedural;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
 
@@ -13,7 +18,6 @@ import dev.huskuraft.effortless.building.BuildState;
 import dev.huskuraft.effortless.building.Context;
 import dev.huskuraft.effortless.building.clipboard.BlockData;
 import dev.huskuraft.effortless.building.clipboard.Clipboard;
-import dev.huskuraft.effortless.building.clipboard.Snapshot;
 import dev.huskuraft.effortless.building.config.ProceduralSafetyConfig;
 import dev.huskuraft.effortless.building.pattern.Pattern;
 import dev.huskuraft.effortless.building.pattern.Transformers;
@@ -21,6 +25,7 @@ import dev.huskuraft.effortless.building.pattern.randomize.Chance;
 import dev.huskuraft.effortless.building.pattern.randomize.ItemRandomizer;
 import dev.huskuraft.effortless.client.pattern.procedural.config.PatternMaterialSource;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralBlockEntry;
+import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralPatternLibrary;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralPatternPreset;
 import dev.huskuraft.universal.api.core.BlockItem;
 import dev.huskuraft.universal.api.core.BlockPosition;
@@ -40,6 +45,8 @@ public final class ProceduralContextCompiler {
     public static final long ESTIMATED_BYTES_PER_POSITION = 160L;
     public static final long MAX_ESTIMATED_MEMORY_BYTES =
             ProceduralSafetyConfig.DEFAULT.maxEstimatedMemoryBytes();
+    public static final int MAX_COMPOSITION_LAYERS =
+            ProceduralCompositionEngine.MAXIMUM_LAYERS;
 
     private final EffortlessClient entrance;
 
@@ -94,6 +101,15 @@ public final class ProceduralContextCompiler {
                 == PatternMaterialSource.CUSTOM_PALETTE
                 ? preset
                 : preset.withBlocks(materialResolution.blocks());
+        if (effectivePreset.advanced().compositionLayers().size()
+                > MAX_COMPOSITION_LAYERS) {
+            return PreparationResult.failure(
+                    "Scene composition contains too many layers",
+                    List.of(effectivePreset.advanced().compositionLayers().size()
+                            + " layers > " + MAX_COMPOSITION_LAYERS
+                            + " allowed")
+            );
+        }
 
         var adaptation = ProceduralPresetAdapter.adapt(effectivePreset);
         if (!adaptation.isSuccess()) {
@@ -200,45 +216,233 @@ public final class ProceduralContextCompiler {
             );
         }
 
-        ExistingNeighborLookup existingNeighbors =
-                effectivePreset.inspectExistingWorld()
-                ? generationPosition -> {
-                    var absolute = worldCoordinates
-                            ? new BlockPosition(
-                                    generationPosition.x(),
-                                    generationPosition.y(),
-                                    generationPosition.z()
-                            )
-                            : new BlockPosition(
-                                    generationPosition.x() + minX,
-                                    generationPosition.y() + minY,
-                                    generationPosition.z() + minZ
-                            );
-                    var item = player.getWorld().getBlockState(absolute).getItem();
-                    return Optional.of(item.getId().getString());
-                }
-                : ExistingNeighborLookup.NONE;
+        var ownerByPosition = new LinkedHashMap<
+                GridPosition, ProceduralPatternPreset>();
+        var geometryByPosition = new LinkedHashMap<
+                GridPosition, StructuralGeometry>();
+        var forcedErasers = new LinkedHashSet<GridPosition>();
+        boolean forceExplicit = false;
+        if (!effectivePreset.advanced().compositionLayers().isEmpty()) {
+            var composition = ProceduralCompositionEngine.compose(
+                    new LinkedHashSet<>(operationOrder),
+                    List.of(),
+                    compositionLibrary(effectivePreset),
+                    effectivePreset,
+                    Math.min(serverVolumeLimit, safety.maxCompiledPositions())
+            );
+            if (!composition.isSuccess()) {
+                return PreparationResult.failure(
+                        "Scene composition is invalid",
+                        composition.errors()
+                );
+            }
+            forceExplicit = true;
+            operationOrder.clear();
+            operationOrder.addAll(composition.positions());
+            absoluteByGenerationPosition.clear();
+            for (var generationPosition : operationOrder) {
+                var absolute = worldCoordinates
+                        ? new BlockPosition(
+                                generationPosition.x(),
+                                generationPosition.y(),
+                                generationPosition.z()
+                        )
+                        : new BlockPosition(
+                                generationPosition.x() + minX,
+                                generationPosition.y() + minY,
+                                generationPosition.z() + minZ
+                        );
+                absoluteByGenerationPosition.put(
+                        generationPosition, absolute
+                );
+            }
+            composition.additions().forEach((position, generated) -> {
+                ownerByPosition.put(position, generated.preset());
+                geometryByPosition.put(position, generated.geometry());
+            });
+            forcedErasers.addAll(composition.erasers());
+
+            if (operationOrder.size() > serverVolumeLimit) {
+                return PreparationResult.failure(
+                        "Composed output exceeds the server placement volume limit",
+                        List.of(operationOrder.size() + " blocks > "
+                                + serverVolumeLimit + " allowed")
+                );
+            }
+            if (operationOrder.size() > safety.maxCompiledPositions()) {
+                return PreparationResult.failure(
+                        "Composed output exceeds the client compilation limit",
+                        List.of(operationOrder.size() + " blocks > "
+                                + safety.maxCompiledPositions())
+                );
+            }
+            estimatedBytes = operationOrder.size()
+                    * ESTIMATED_BYTES_PER_POSITION;
+            if (estimatedBytes > safety.maxEstimatedMemoryBytes()) {
+                return PreparationResult.failure(
+                        "Composed output is estimated to use too much temporary memory",
+                        List.of(estimatedBytes + " estimated bytes > "
+                                + safety.maxEstimatedMemoryBytes())
+                );
+            }
+            var composedOutOfReach = absoluteByGenerationPosition.values()
+                    .stream()
+                    .filter(position -> position.getCenter().distance(
+                            player.getEyePosition()
+                    ) > maximumReach)
+                    .findFirst();
+            if (composedOutOfReach.isPresent()) {
+                return PreparationResult.failure(
+                        "Composed output contains a block beyond the server reach limit",
+                        List.of(composedOutOfReach.get() + " is farther than "
+                                + maximumReach + " blocks")
+                );
+            }
+            int composedMinX = absoluteByGenerationPosition.values().stream()
+                    .mapToInt(BlockPosition::x).min().orElseThrow();
+            int composedMinY = absoluteByGenerationPosition.values().stream()
+                    .mapToInt(BlockPosition::y).min().orElseThrow();
+            int composedMinZ = absoluteByGenerationPosition.values().stream()
+                    .mapToInt(BlockPosition::z).min().orElseThrow();
+            int composedMaxX = absoluteByGenerationPosition.values().stream()
+                    .mapToInt(BlockPosition::x).max().orElseThrow();
+            int composedMaxY = absoluteByGenerationPosition.values().stream()
+                    .mapToInt(BlockPosition::y).max().orElseThrow();
+            int composedMaxZ = absoluteByGenerationPosition.values().stream()
+                    .mapToInt(BlockPosition::z).max().orElseThrow();
+            long boundingVolume = (long) (composedMaxX - composedMinX + 1)
+                    * (composedMaxY - composedMinY + 1)
+                    * (composedMaxZ - composedMinZ + 1);
+            int clipboardLimit = source.configs().constraintConfig()
+                    .maxStructureCopyPasteVolume();
+            if (boundingVolume > clipboardLimit) {
+                return PreparationResult.failure(
+                        "Composed bounding volume exceeds the server clipboard limit",
+                        List.of(boundingVolume + " blocks > "
+                                + clipboardLimit + " allowed")
+                );
+            }
+        }
+
+        var groupPositions = new LinkedHashMap<
+                UUID, List<GridPosition>>();
+        var groupPresets = new LinkedHashMap<
+                UUID, ProceduralPatternPreset>();
+        for (var position : operationOrder) {
+            if (forcedErasers.contains(position)) {
+                continue;
+            }
+            var recipe = ownerByPosition.getOrDefault(
+                    position, effectivePreset
+            );
+            groupPresets.putIfAbsent(recipe.id(), recipe);
+            groupPositions.computeIfAbsent(
+                    recipe.id(), ignored -> new ArrayList<>()
+            ).add(position);
+        }
+        var preparedRecipes = new ArrayList<PreparedRecipe>();
+        for (var entry : groupPositions.entrySet()) {
+            var configuredRecipe = groupPresets.get(entry.getKey());
+            var recipe = configuredRecipe.materialSource()
+                    == PatternMaterialSource.CUSTOM_PALETTE
+                    ? configuredRecipe
+                    : configuredRecipe.withBlocks(
+                            resolveMaterials(player, configuredRecipe).blocks()
+                    );
+            var recipeAdaptation = ProceduralPresetAdapter.adapt(recipe);
+            if (!recipeAdaptation.isSuccess()) {
+                return PreparationResult.failure(
+                        "Composition recipe '" + recipe.name()
+                                + "' is invalid",
+                        recipeAdaptation.errors()
+                );
+            }
+            boolean recipeWorld = recipe.advanced().coordinateSpace()
+                    == CoordinateSpace.WORLD;
+            var recipeOrder = new ArrayList<GridPosition>();
+            var recipeAbsolute = new LinkedHashMap<
+                    GridPosition, BlockPosition>();
+            var recipeGeometry = new LinkedHashMap<
+                    GridPosition, StructuralGeometry>();
+            for (var rootPosition : entry.getValue()) {
+                var absolute = absoluteByGenerationPosition.get(rootPosition);
+                var recipePosition = recipeWorld
+                        ? new GridPosition(
+                                absolute.x(), absolute.y(), absolute.z()
+                        )
+                        : new GridPosition(
+                                absolute.x() - minX,
+                                absolute.y() - minY,
+                                absolute.z() - minZ
+                        );
+                recipeOrder.add(recipePosition);
+                recipeAbsolute.put(recipePosition, absolute);
+                recipeGeometry.put(
+                        recipePosition,
+                        geometryByPosition.getOrDefault(
+                                rootPosition, StructuralGeometry.NONE
+                        )
+                );
+            }
+            ExistingNeighborLookup recipeNeighbors = recipe.inspectExistingWorld()
+                    ? generationPosition -> {
+                        var absolute = recipeAbsolute.get(generationPosition);
+                        if (absolute == null) {
+                            absolute = recipeWorld
+                                    ? new BlockPosition(
+                                            generationPosition.x(),
+                                            generationPosition.y(),
+                                            generationPosition.z()
+                                    )
+                                    : new BlockPosition(
+                                            generationPosition.x() + minX,
+                                            generationPosition.y() + minY,
+                                            generationPosition.z() + minZ
+                                    );
+                        }
+                        var item = player.getWorld().getBlockState(absolute)
+                                .getItem();
+                        return Optional.of(item.getId().getString());
+                    }
+                    : ExistingNeighborLookup.NONE;
+            CoordinateLookup recipeCoordinates = (coordinate, position) -> {
+                var geometry = recipeGeometry.get(position);
+                return geometry == null
+                        ? java.util.OptionalDouble.empty()
+                        : geometry.sample(coordinate);
+            };
+            preparedRecipes.add(new PreparedRecipe(
+                    recipe,
+                    recipeOrder,
+                    recipeAbsolute,
+                    recipeAdaptation.ruleSet().orElseThrow(),
+                    recipeNeighbors,
+                    effectiveSeed(
+                            recipe,
+                            recipeAbsolute.values(),
+                            minX, minY, minZ
+                    ),
+                    recipeCoordinates
+            ));
+        }
 
         return PreparationResult.success(new PreparedCompilation(
+                player,
                 source,
+                safety,
                 effectivePreset,
                 stockTransformers,
                 operationOrder,
                 absoluteByGenerationPosition,
-                adaptation.ruleSet().orElseThrow(),
-                existingNeighbors,
-                effectiveSeed(
-                        effectivePreset,
-                        operations,
-                        minX,
-                        minY,
-                        minZ
-                ),
+                preparedRecipes,
+                forcedErasers,
+                geometryByPosition,
+                forceExplicit,
                 Math.min(
                         serverVolumeLimit,
                         safety.maxCompiledPositions()
                 ),
-                operations.size(),
+                operationOrder.size(),
                 estimatedBytes,
                 safety.maxEstimatedWork()
         ));
@@ -322,47 +526,94 @@ public final class ProceduralContextCompiler {
                 .toList());
     }
 
+    private ProceduralPatternLibrary compositionLibrary(
+            ProceduralPatternPreset rootPreset
+    ) {
+        var stored = entrance.getProceduralConfigStorage().get();
+        return stored.put(rootPreset);
+    }
+
     public ResolutionResult resolve(
             PreparedCompilation prepared,
             BooleanSupplier cancelled,
             GenerationProgress progress
     ) {
-        var request = new GenerationRequest<>(
-                prepared.seed(),
-                prepared.operationOrder(),
-                prepared.ruleSet(),
-                prepared.existingNeighbors(),
-                prepared.maximumPositions(),
-                cancelled,
-                progress
-        );
-        var generated = ProceduralGenerator.generate(
-                request,
-                prepared.maximumEstimatedWork()
-        );
-        if (!generated.isSuccess()) {
-            var failure = generated.failure().orElseThrow();
-            return ResolutionResult.failure(failure.message(), failure.details());
-        }
-
-        var plan = SequenceCompilationPlan.create(
-                prepared.operationOrder(),
-                generated.placements()
-        );
-        if (!plan.isSuccess()) {
-            return ResolutionResult.failure(
-                    "Could not align procedural output with stock operation order",
-                    List.of(plan.error())
+        var materialsByAbsolute = new LinkedHashMap<
+                BlockPosition, ProceduralMaterial>();
+        int recipeIndex = 0;
+        for (var recipe : prepared.recipes()) {
+            if (cancelled.getAsBoolean()) {
+                return ResolutionResult.failure(
+                        "Procedural generation was cancelled", List.of()
+                );
+            }
+            int currentRecipe = recipeIndex++;
+            var request = new GenerationRequest<>(
+                    recipe.seed(),
+                    recipe.positions(),
+                    recipe.ruleSet(),
+                    recipe.existingNeighbors(),
+                    prepared.maximumPositions(),
+                    cancelled,
+                    (stage, completed, total) -> progress.update(
+                            stage,
+                            currentRecipe * 1_000
+                                    + (int) Math.round(
+                                            completed * 1_000.0
+                                                    / Math.max(1, total)
+                                    ),
+                            prepared.recipes().size() * 1_000
+                    ),
+                    recipe.coordinates()
             );
+            var generated = ProceduralGenerator.generate(
+                    request,
+                    prepared.maximumEstimatedWork()
+            );
+            if (!generated.isSuccess()) {
+                var failure = generated.failure().orElseThrow();
+                return ResolutionResult.failure(
+                        "Recipe '" + recipe.preset().name() + "': "
+                                + failure.message(),
+                        failure.details()
+                );
+            }
+            for (var entry : generated.placements().entrySet()) {
+                var absolute = recipe.absolutePositions().get(entry.getKey());
+                if (absolute == null) {
+                    return ResolutionResult.failure(
+                            "Could not align a composed recipe with its output",
+                            List.of(recipe.preset().name() + ": "
+                                    + entry.getKey())
+                    );
+                }
+                materialsByAbsolute.put(absolute, entry.getValue());
+            }
         }
-
-        var runs = RunLengthSequence.encode(
-                plan.sequence(),
-                Chance.MAX_ITEM_COUNT
+        for (var position : prepared.forcedErasers()) {
+            var absolute = prepared.absolutePositions().get(position);
+            if (absolute != null) {
+                materialsByAbsolute.put(absolute, ProceduralMaterial.eraser());
+            }
+        }
+        var sequence = new ArrayList<ProceduralMaterial>(
+                prepared.operationOrder().size()
         );
+        for (var position : prepared.operationOrder()) {
+            var absolute = prepared.absolutePositions().get(position);
+            var material = materialsByAbsolute.get(absolute);
+            if (material == null) {
+                return ResolutionResult.failure(
+                        "Could not align procedural output with composition order",
+                        List.of(String.valueOf(position))
+                );
+            }
+            sequence.add(material);
+        }
+        var runs = RunLengthSequence.encode(sequence, Chance.MAX_ITEM_COUNT);
         return ResolutionResult.success(new ResolvedCompilation(
                 runs,
-                plan.sequence()
+                sequence
         ));
     }
 
@@ -370,7 +621,7 @@ public final class ProceduralContextCompiler {
             PreparedCompilation prepared,
             ResolvedCompilation resolved
     ) {
-        if (resolved.sequence().stream()
+        if (prepared.forceExplicit() || resolved.sequence().stream()
                 .anyMatch(ProceduralMaterial::isSpecial)) {
             return finishExplicitSnapshot(prepared, resolved.sequence());
         }
@@ -421,17 +672,8 @@ public final class ProceduralContextCompiler {
             List<ProceduralMaterial> sequence
     ) {
         var absolutePositions = prepared.absolutePositions();
-        int minX = absolutePositions.values().stream()
-                .mapToInt(BlockPosition::x).min().orElseThrow();
-        int minY = absolutePositions.values().stream()
-                .mapToInt(BlockPosition::y).min().orElseThrow();
-        int minZ = absolutePositions.values().stream()
-                .mapToInt(BlockPosition::z).min().orElseThrow();
-        var anchor = new BlockPosition(minX, minY, minZ);
         var air = Items.AIR.item().getBlock().getDefaultBlockState();
         var blocks = new ArrayList<BlockData>(sequence.size());
-        boolean containsPlacement = false;
-        boolean containsErase = false;
         for (int index = 0; index < sequence.size(); index++) {
             var material = sequence.get(index);
             if (material.kind() == ProceduralMaterial.Kind.SKIP) {
@@ -440,48 +682,88 @@ public final class ProceduralContextCompiler {
             var absolute = absolutePositions.get(
                     prepared.operationOrder().get(index)
             );
-            var relative = new BlockPosition(
-                    absolute.x() - minX,
-                    absolute.y() - minY,
-                    absolute.z() - minZ
-            );
             if (material.kind() == ProceduralMaterial.Kind.ERASER) {
-                containsErase = true;
-                blocks.add(new BlockData(relative, air, null));
+                blocks.add(new BlockData(absolute, air, null));
             } else {
-                containsPlacement = true;
                 blocks.add(new BlockData(
-                        relative,
+                        absolute,
                         material.placeableBlock().orElseThrow()
                                 .getBlock().getDefaultBlockState(),
                         null
                 ));
             }
         }
-        if (blocks.isEmpty()) {
-            return CompilationResult.failure(
-                    "Every generated position was skipped",
-                    List.of("Nothing would be sent to the server")
-            );
+        var absoluteGeometries = new HashMap<
+                GridPosition, StructuralGeometry>();
+        prepared.geometries().forEach((generation, geometry) -> {
+            var absolute = absolutePositions.get(generation);
+            if (absolute != null) {
+                absoluteGeometries.put(
+                        new GridPosition(
+                                absolute.x(), absolute.y(), absolute.z()
+                        ),
+                        geometry
+                );
+            }
+        });
+        if (!absoluteGeometries.isEmpty()) {
+            var occupied = new java.util.HashSet<GridPosition>();
+            var rawStates = new HashMap<GridPosition,
+                    dev.huskuraft.universal.api.core.BlockState>();
+            for (var data : blocks) {
+                var position = new GridPosition(
+                        data.blockPosition().x(),
+                        data.blockPosition().y(),
+                        data.blockPosition().z()
+                );
+                if (data.blockState() != null
+                        && !data.blockState().isAir()) {
+                    occupied.add(position);
+                    rawStates.put(position, data.blockState());
+                }
+            }
+            var resolvedBlocks = new ArrayList<BlockData>(blocks.size());
+            for (var data : blocks) {
+                var position = new GridPosition(
+                        data.blockPosition().x(),
+                        data.blockPosition().y(),
+                        data.blockPosition().z()
+                );
+                var geometry = absoluteGeometries.get(position);
+                if (geometry == null || data.blockState() == null
+                        || data.blockState().isAir()) {
+                    resolvedBlocks.add(data);
+                    continue;
+                }
+                resolvedBlocks.add(new BlockData(
+                        data.blockPosition(),
+                    StructuralBlockStateResolver.resolve(
+                            data.blockState(), position, geometry,
+                            occupied, absoluteGeometries, rawStates
+                    ),
+                    data.entityTag()
+                ));
+            }
+            blocks = resolvedBlocks;
         }
-        var constraints = prepared.source().configs().constraintConfig();
-        if (containsPlacement && !constraints.allowPlaceBlocks()) {
-            return CompilationResult.failure(
-                    "The server does not allow block placement",
-                    List.of()
-            );
-        }
-        if (containsErase && !constraints.allowBreakBlocks()) {
-            return CompilationResult.failure(
-                    "The server does not allow block breaking",
-                    List.of()
-            );
-        }
-        var snapshot = new Snapshot(
-                "Compiled procedural pattern",
-                System.currentTimeMillis(),
-                blocks
+        var assembled = ExplicitSnapshotAssembler.assemble(
+                prepared.player(),
+                prepared.source(),
+                prepared.safety(),
+                new ExplicitSnapshotAssembler.Request(
+                        "Compiled procedural pattern",
+                        "Procedural output",
+                        blocks,
+                        true
+                )
         );
+        if (!assembled.isSuccess()) {
+            return CompilationResult.failure(
+                    assembled.message(), assembled.details()
+            );
+        }
+        var snapshot = assembled.snapshot().orElseThrow();
+        var anchor = assembled.anchor().orElseThrow();
         var reference = prepared.source().getInteraction(0);
         var anchorInteraction = reference
                 .withPosition(anchor.getCenter())
@@ -514,29 +796,29 @@ public final class ProceduralContextCompiler {
         }
         return CompilationResult.success(
                 explicit,
-                blocks.size(),
-                prepared.estimatedMemoryBytes()
+                assembled.positionCount(),
+                assembled.estimatedMemoryBytes()
         );
     }
 
     private static long effectiveSeed(
             ProceduralPatternPreset preset,
-            List<dev.huskuraft.effortless.building.operation.block.BlockOperation> operations,
+            Collection<BlockPosition> positions,
             int minX,
             int minY,
             int minZ
     ) {
         long seed = preset.seed();
-        int maxX = operations.stream()
-                .mapToInt(operation -> operation.getBlockPosition().x())
+        int maxX = positions.stream()
+                .mapToInt(BlockPosition::x)
                 .max()
                 .orElse(minX);
-        int maxY = operations.stream()
-                .mapToInt(operation -> operation.getBlockPosition().y())
+        int maxY = positions.stream()
+                .mapToInt(BlockPosition::y)
                 .max()
                 .orElse(minY);
-        int maxZ = operations.stream()
-                .mapToInt(operation -> operation.getBlockPosition().z())
+        int maxZ = positions.stream()
+                .mapToInt(BlockPosition::z)
                 .max()
                 .orElse(minZ);
         return switch (preset.advanced().seedMode()) {
@@ -545,7 +827,7 @@ public final class ProceduralContextCompiler {
                 seed = StableRandom.mixSeed(seed, maxX - minX + 1L);
                 seed = StableRandom.mixSeed(seed, maxY - minY + 1L);
                 seed = StableRandom.mixSeed(seed, maxZ - minZ + 1L);
-                yield StableRandom.mixSeed(seed, operations.size());
+                yield StableRandom.mixSeed(seed, positions.size());
             }
             case WORLD_ANCHORED -> {
                 seed = StableRandom.mixSeed(seed, minX);
@@ -567,14 +849,17 @@ public final class ProceduralContextCompiler {
     }
 
     public record PreparedCompilation(
+            dev.huskuraft.universal.api.core.Player player,
             Context source,
+            ProceduralSafetyConfig safety,
             ProceduralPatternPreset preset,
             List<dev.huskuraft.effortless.building.pattern.Transformer> stockTransformers,
             List<GridPosition> operationOrder,
             java.util.Map<GridPosition, BlockPosition> absolutePositions,
-            ProceduralRuleSet<ProceduralMaterial> ruleSet,
-            ExistingNeighborLookup existingNeighbors,
-            long seed,
+            List<PreparedRecipe> recipes,
+            Set<GridPosition> forcedErasers,
+            Map<GridPosition, StructuralGeometry> geometries,
+            boolean forceExplicit,
             int maximumPositions,
             int positionCount,
             long estimatedMemoryBytes,
@@ -585,6 +870,25 @@ public final class ProceduralContextCompiler {
             stockTransformers = List.copyOf(stockTransformers);
             operationOrder = List.copyOf(operationOrder);
             absolutePositions = java.util.Map.copyOf(absolutePositions);
+            recipes = List.copyOf(recipes);
+            forcedErasers = Set.copyOf(forcedErasers);
+            geometries = Map.copyOf(geometries);
+        }
+    }
+
+    public record PreparedRecipe(
+            ProceduralPatternPreset preset,
+            List<GridPosition> positions,
+            Map<GridPosition, BlockPosition> absolutePositions,
+            ProceduralRuleSet<ProceduralMaterial> ruleSet,
+            ExistingNeighborLookup existingNeighbors,
+            long seed,
+            CoordinateLookup coordinates
+    ) {
+
+        public PreparedRecipe {
+            positions = List.copyOf(positions);
+            absolutePositions = Map.copyOf(absolutePositions);
         }
     }
 

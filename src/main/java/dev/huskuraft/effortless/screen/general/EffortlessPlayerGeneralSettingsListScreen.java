@@ -19,8 +19,9 @@ import dev.huskuraft.universal.api.text.Text;
 import dev.huskuraft.effortless.screen.player.EffortlessOnlinePlayersScreen;
 import dev.huskuraft.effortless.screen.player.PlayerInfoList;
 import dev.huskuraft.effortless.session.config.ConstraintConfig;
+import dev.huskuraft.effortless.screen.pattern.procedural.EffortlessProceduralScreen;
 
-public class EffortlessPlayerGeneralSettingsListScreen extends AbstractPanelScreen {
+public class EffortlessPlayerGeneralSettingsListScreen extends EffortlessProceduralScreen {
 
     private final Consumer<Map<UUID, ConstraintConfig>> consumer;
     private Map<UUID, ConstraintConfig> defaultConfig;

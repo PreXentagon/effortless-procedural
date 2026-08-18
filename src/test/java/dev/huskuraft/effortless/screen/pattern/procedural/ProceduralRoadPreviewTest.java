@@ -28,9 +28,7 @@ class ProceduralRoadPreviewTest {
                 .filter(type -> !type.isClientOnly())
                 .map(ProceduralPreviewType::stockMode)
                 .toList();
-        var expected = Arrays.stream(BuildMode.values())
-                .filter(BuildMode::isEnabled)
-                .toList();
+        var expected = Arrays.stream(BuildMode.values()).toList();
 
         assertEquals(expected, stockModes);
         assertTrue(ProceduralPreviewType.ALL.contains(
@@ -59,7 +57,7 @@ class ProceduralRoadPreviewTest {
 
     @Test
     void roadPreviewIsCurvedSparseGeometryWithRoadCoordinates() {
-        var geometry = ProceduralPreviewWidget.roadGeometry(
+        var geometry = ProceduralPreviewCompiler.roadGeometry(
                 RoadProfile.DEFAULT
         );
         var positions = geometry.positions();
@@ -96,7 +94,7 @@ class ProceduralRoadPreviewTest {
 
     @Test
     void treePreviewExposesAllGuidedComponentCoordinates() {
-        var geometry = ProceduralPreviewWidget.treeGeometry(
+        var geometry = ProceduralPreviewCompiler.treeGeometry(
                 TreeGenerationConfig.forArchetype(TreeArchetype.OAK),
                 0L
         );
@@ -117,7 +115,7 @@ class ProceduralRoadPreviewTest {
 
     @Test
     void generatedTreePreviewRetainsComponentRolesForMaterialRecipes() {
-        var geometry = ProceduralPreviewWidget.treeGeometry(
+        var geometry = ProceduralPreviewCompiler.treeGeometry(
                 TreeGenerationConfig.forArchetype(TreeArchetype.MANGROVE),
                 86420L
         );
@@ -184,20 +182,20 @@ class ProceduralRoadPreviewTest {
 
     @Test
     void roadAndTreeGeometryRespondToTunedValues() {
-        var narrow = ProceduralPreviewWidget.roadGeometry(
+        var narrow = ProceduralPreviewCompiler.roadGeometry(
                 new RoadProfile(3, 1, 0, 0.0, 0.25)
         );
-        var wide = ProceduralPreviewWidget.roadGeometry(
+        var wide = ProceduralPreviewCompiler.roadGeometry(
                 new RoadProfile(13, 4, 2, 0.0, 0.25)
         );
         assertTrue(wide.positions().size() > narrow.positions().size());
 
-        var shortTree = ProceduralPreviewWidget.treeGeometry(
+        var shortTree = ProceduralPreviewCompiler.treeGeometry(
                 TreeGenerationConfig.forArchetype(TreeArchetype.OAK)
                         .withHeightRange(10, 10),
                 412L
         );
-        var tallTree = ProceduralPreviewWidget.treeGeometry(
+        var tallTree = ProceduralPreviewCompiler.treeGeometry(
                 TreeGenerationConfig.forArchetype(TreeArchetype.OAK)
                         .withHeightRange(34, 34),
                 412L
@@ -210,8 +208,8 @@ class ProceduralRoadPreviewTest {
     void everyTreeSubtypeUsesAnExistingVanillaBlockTexturePath() {
         for (var archetype : TreeArchetype.values()) {
             assertTrue(
-                    archetype.getIcon().getString().startsWith(
-                            "minecraft:textures/block/"
+                    archetype.iconPath().startsWith(
+                            "textures/block/"
                     ),
                     archetype.name()
             );

@@ -44,8 +44,13 @@ public enum TreeArchetype implements ClientToolSubtype {
     public ResourceLocation getIcon() {
         return ResourceLocation.of(
                 "minecraft",
-                "textures/block/" + icon + ".png"
+                iconPath()
         );
+    }
+
+    /** Stable asset path, exposed separately for loader-independent tests. */
+    public String iconPath() {
+        return "textures/block/" + icon + ".png";
     }
 
     public boolean isConifer() {

@@ -70,7 +70,6 @@ import dev.huskuraft.effortless.networking.packets.player.PlayerBuildPacket;
 import dev.huskuraft.effortless.networking.packets.player.PlayerCommandPacket;
 import dev.huskuraft.effortless.renderer.opertaion.children.BlockOperationRenderer;
 import dev.huskuraft.effortless.renderer.outliner.OutlineRenderLayers;
-import dev.huskuraft.effortless.screen.wheel.AbstractWheelScreen;
 import dev.huskuraft.effortless.session.config.ConstraintConfig;
 import dev.huskuraft.effortless.session.config.SessionConfig;
 
@@ -1289,13 +1288,22 @@ public final class EffortlessClientStructureBuilder extends StructureBuilder {
 
         var texts = new ArrayList<Tuple2<Text, Text>>();
         texts.add(new Tuple2<>(Text.translate("effortless.build.summary.structure").withStyle(ChatFormatting.WHITE), context.buildMode().getDisplayName().withStyle(ChatFormatting.GOLD)));
-        texts.add(new Tuple2<>(AbstractWheelScreen.button(context.replaceStrategy()).getCategory().withStyle(ChatFormatting.WHITE), AbstractWheelScreen.button(context.replaceStrategy()).getName().withStyle(ChatFormatting.GOLD)));
+        texts.add(new Tuple2<>(
+                context.replaceStrategy().getCategoryText()
+                        .withStyle(ChatFormatting.WHITE),
+                context.replaceStrategy().getNameText()
+                        .withStyle(ChatFormatting.GOLD)
+        ));
 
         for (var supportedFeature : context.structure().getSupportedFeatures()) {
             var option = context.buildFeatures().stream().filter(feature -> Objects.equals(feature.getCategory(), supportedFeature.getName())).findFirst();
             if (option.isEmpty()) continue;
-            var button = AbstractWheelScreen.button(option.get());
-            texts.add(new Tuple2<>(button.getCategory().withStyle(ChatFormatting.WHITE), button.getName().withStyle(ChatFormatting.GOLD)));
+            texts.add(new Tuple2<>(
+                    option.get().getCategoryText()
+                            .withStyle(ChatFormatting.WHITE),
+                    option.get().getNameText()
+                            .withStyle(ChatFormatting.GOLD)
+            ));
         }
         if (context.pattern().enabled()) {
             texts.add(new Tuple2<>(Text.translate("effortless.build.summary.pattern").withStyle(ChatFormatting.WHITE), (context.pattern().enabled() ? Text.translate("effortless.build.summary.pattern_enabled") : Text.translate("effortless.build.summary.pattern_disabled")).withStyle(ChatFormatting.GOLD)));

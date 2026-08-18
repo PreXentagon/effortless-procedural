@@ -32,6 +32,53 @@ public record GenerationBounds(
         return new GenerationBounds(minX, minY, minZ, maxX, maxY, maxZ);
     }
 
+    public int sizeX() {
+        return maxX - minX + 1;
+    }
+
+    public int sizeY() {
+        return maxY - minY + 1;
+    }
+
+    public int sizeZ() {
+        return maxZ - minZ + 1;
+    }
+
+    public long volume() {
+        return Math.multiplyExact(
+                Math.multiplyExact((long) sizeX(), sizeY()),
+                sizeZ()
+        );
+    }
+
+    public double centerX() {
+        return (minX + maxX + 1) * 0.5;
+    }
+
+    public double centerY() {
+        return (minY + maxY + 1) * 0.5;
+    }
+
+    public double centerZ() {
+        return (minZ + maxZ + 1) * 0.5;
+    }
+
+    public GridPosition minimum() {
+        return new GridPosition(minX, minY, minZ);
+    }
+
+    public GridPosition maximum() {
+        return new GridPosition(maxX, maxY, maxZ);
+    }
+
+    public GridPosition normalize(GridPosition position) {
+        return new GridPosition(
+                position.x() - minX,
+                position.y() - minY,
+                position.z() - minZ
+        );
+    }
+
     public double normalizedX(GridPosition position) {
         return normalize(position.x(), minX, maxX);
     }

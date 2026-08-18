@@ -67,7 +67,11 @@ class ClientConfigSerializerRegressionTest {
         );
         var original = new ClientConfig(
                 new BuilderConfig(7, false),
-                new RenderConfig(true, false, false, 2048, 128),
+                new RenderConfig(
+                        true, false, false, 2048, 128,
+                        "minecraft:orange_wool",
+                        "minecraft:orange_stained_glass"
+                ),
                 new ProceduralSafetyConfig(
                         false,
                         8_000,
@@ -90,6 +94,7 @@ class ClientConfigSerializerRegressionTest {
                 original.proceduralSafetyConfig(),
                 restored.proceduralSafetyConfig()
         );
+        assertEquals(original.renderConfig(), restored.renderConfig());
         assertEquals(4, restored.patternConfig().transformerPreset().size());
         assertInstanceOf(ArrayTransformer.class, restored.patternConfig().transformerPreset().get(0));
         assertInstanceOf(MirrorTransformer.class, restored.patternConfig().transformerPreset().get(1));

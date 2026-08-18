@@ -460,7 +460,7 @@
   "effortless.transformer.template_select.title": "选择变换模板",
   "effortless.transformer.template_select.use_template": "使用模板",
   "effortless.transformer_presets.title": "变换器预设",
-  "key.effortless.build_mode_radial.desc": "显示建造模式环形菜单",
+  "key.effortless.build_mode_radial.desc": "打开 Effortless 工作台",
   "key.effortless.build_mode_settings.desc": "打开建造模式设置",
   "key.effortless.category.default": "轻松建造",
   "key.effortless.control.desc": "Control",

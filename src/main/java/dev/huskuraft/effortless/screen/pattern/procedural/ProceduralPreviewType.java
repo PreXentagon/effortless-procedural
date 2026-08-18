@@ -3,6 +3,7 @@ package dev.huskuraft.effortless.screen.pattern.procedural;
 import java.awt.Color;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 import dev.huskuraft.effortless.Effortless;
 import dev.huskuraft.effortless.building.structure.BuildMode;
@@ -10,13 +11,14 @@ import dev.huskuraft.universal.api.core.ResourceLocation;
 import dev.huskuraft.universal.api.text.Text;
 
 /**
- * Client-only shapes offered by the pattern workbench preview.
+ * Placement tools offered by the authoritative workbench selector.
  *
  * <p>Road deliberately lives outside {@link BuildMode}: build modes are sent
  * to the server by ordinal, while a road is compiled locally into a stock
  * clipboard snapshot.</p>
  */
 enum ProceduralPreviewType {
+    DISABLED(BuildMode.DISABLED),
     SINGLE(BuildMode.SINGLE),
     LINE(BuildMode.LINE),
     WALL(BuildMode.WALL),
@@ -58,6 +60,10 @@ enum ProceduralPreviewType {
 
     boolean isClientOnly() {
         return stockMode == null;
+    }
+
+    String persistentId() {
+        return name().toLowerCase(Locale.ROOT);
     }
 
     BuildMode stockMode() {

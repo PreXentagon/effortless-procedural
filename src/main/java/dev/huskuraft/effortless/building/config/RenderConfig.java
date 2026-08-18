@@ -5,7 +5,9 @@ public record RenderConfig(
         boolean showOtherPlayersBuild,
         boolean showOtherPlayersBuildTooltips,
         int maxRenderVolume,
-        int maxRenderDistance
+        int maxRenderDistance,
+        String eraserPreviewBlockId,
+        String cutoutPreviewBlockId
 ) {
     public static final int MAX_RENDER_VOLUME_DEFAULT = 1024;
     public static final int MAX_RENDER_VOLUME_MIN = 0;
@@ -17,7 +19,43 @@ public record RenderConfig(
                 true,
                 false,
                 MAX_RENDER_VOLUME_DEFAULT,
-                128
+                128,
+                "minecraft:red_wool",
+                "minecraft:red_stained_glass"
+        );
+    }
+
+    public RenderConfig(
+            boolean showBlockPreview,
+            boolean showOtherPlayersBuild,
+            boolean showOtherPlayersBuildTooltips,
+            int maxRenderVolume,
+            int maxRenderDistance
+    ) {
+        this(
+                showBlockPreview,
+                showOtherPlayersBuild,
+                showOtherPlayersBuildTooltips,
+                maxRenderVolume,
+                maxRenderDistance,
+                "minecraft:red_wool",
+                "minecraft:red_stained_glass"
+        );
+    }
+
+    public RenderConfig withEraserPreviewBlockId(String value) {
+        return new RenderConfig(
+                showBlockPreview, showOtherPlayersBuild,
+                showOtherPlayersBuildTooltips, maxRenderVolume,
+                maxRenderDistance, value, cutoutPreviewBlockId
+        );
+    }
+
+    public RenderConfig withCutoutPreviewBlockId(String value) {
+        return new RenderConfig(
+                showBlockPreview, showOtherPlayersBuild,
+                showOtherPlayersBuildTooltips, maxRenderVolume,
+                maxRenderDistance, eraserPreviewBlockId, value
         );
     }
 

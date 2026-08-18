@@ -43,13 +43,14 @@ import dev.huskuraft.universal.api.nightconfig.core.ConfigSpec;
 public final class ProceduralPatternConfigSerializer
         implements ConfigSerializer<ProceduralPatternLibrary> {
 
-    public static final int FORMAT_VERSION = 10;
+    public static final int FORMAT_VERSION = 12;
 
     private static final String KEY_FORMAT_VERSION = "formatVersion";
     private static final String KEY_ENABLED = "enabled";
     private static final String KEY_ACTIVE_PRESET = "activePresetId";
     private static final String KEY_PRESETS = "presets";
     private static final String KEY_FIELD_ASSETS = "fieldAssets";
+    private static final String KEY_ACTIVE_TOOL = "activeTool";
 
     @Override
     public ConfigSpec getSpec(Config config) {
@@ -73,6 +74,7 @@ public final class ProceduralPatternConfigSerializer
                         .toList(),
                 Config.class::isInstance
         );
+        spec.define(KEY_ACTIVE_TOOL, "", String.class::isInstance);
         return spec;
     }
 
@@ -102,7 +104,8 @@ public final class ProceduralPatternConfigSerializer
                 config.get(KEY_ENABLED),
                 activeId,
                 presets,
-                fieldAssets
+                fieldAssets,
+                config.get(KEY_ACTIVE_TOOL)
         );
     }
 
@@ -112,6 +115,7 @@ public final class ProceduralPatternConfigSerializer
         config.set(KEY_FORMAT_VERSION, FORMAT_VERSION);
         config.set(KEY_ENABLED, library.enabled());
         config.set(KEY_ACTIVE_PRESET, library.activePresetId().toString());
+        config.set(KEY_ACTIVE_TOOL, library.activeToolId());
         config.set(KEY_PRESETS, library.presets().stream().map(this::serializePreset).toList());
         config.set(
                 KEY_FIELD_ASSETS,
@@ -382,6 +386,12 @@ public final class ProceduralPatternConfigSerializer
                 "cleanupRules",
                 advanced.cleanupRules().stream().map(this::serializeCleanupRule).toList()
         );
+        config.set(
+                "compositionLayers",
+                advanced.compositionLayers().stream()
+                        .map(this::serializeCompositionLayer)
+                        .toList()
+        );
         config.set("parentPresetId", advanced.parentPresetId());
         config.set("inheritBlocks", advanced.inheritBlocks());
         config.set("inheritRules", advanced.inheritRules());
@@ -444,7 +454,10 @@ public final class ProceduralPatternConfigSerializer
                         config,
                         "structuralPlacementMode",
                         StructuralPlacementMode.class
-                )
+                ),
+                config.<List<Config>>get("compositionLayers").stream()
+                        .map(this::deserializeCompositionLayer)
+                        .toList()
         );
     }
 
@@ -552,6 +565,13 @@ public final class ProceduralPatternConfigSerializer
                         .toList(),
                 Config.class::isInstance
         );
+        spec.defineList(
+                "compositionLayers",
+                () -> defaults.compositionLayers().stream()
+                        .map(this::serializeCompositionLayer)
+                        .toList(),
+                Config.class::isInstance
+        );
         spec.define(
                 "parentPresetId",
                 defaults.parentPresetId(),
@@ -559,6 +579,108 @@ public final class ProceduralPatternConfigSerializer
         );
         spec.define("inheritBlocks", defaults.inheritBlocks(), Boolean.class::isInstance);
         spec.define("inheritRules", defaults.inheritRules(), Boolean.class::isInstance);
+        return spec;
+    }
+
+    private Config serializeCompositionLayer(
+            ProceduralCompositionLayer layer
+    ) {
+        var config = Config.inMemory();
+        config.set("name", layer.name());
+        config.set("enabled", layer.enabled());
+        config.set("operation", enumName(layer.operation()));
+        config.set("generator", enumName(layer.generator()));
+        config.set("anchor", enumName(layer.anchor()));
+        config.set("primitive", enumName(layer.primitive()));
+        config.set("presetId", layer.presetId());
+        config.set("offsetX", layer.offsetX());
+        config.set("offsetY", layer.offsetY());
+        config.set("offsetZ", layer.offsetZ());
+        config.set("sizeX", layer.sizeX());
+        config.set("sizeY", layer.sizeY());
+        config.set("sizeZ", layer.sizeZ());
+        config.set("rotationDegrees", layer.rotationDegrees());
+        config.set("hollow", layer.hollow());
+        config.set("shellThickness", layer.shellThickness());
+        config.set("spacing", layer.spacing());
+        config.set("maximumInstances", layer.maximumInstances());
+        config.set("seedSalt", layer.seedSalt());
+        config.set("safeVariation", layer.safeVariation());
+        compositionLayerSpec(layer).correct(config);
+        return config;
+    }
+
+    private ProceduralCompositionLayer deserializeCompositionLayer(
+            Config config
+    ) {
+        var defaults = ProceduralCompositionLayer.defaultLayer();
+        compositionLayerSpec(defaults).correct(config);
+        return new ProceduralCompositionLayer(
+                config.get("name"),
+                config.get("enabled"),
+                parseEnum(
+                        config, "operation",
+                        ProceduralCompositionLayer.Operation.class
+                ),
+                parseEnum(
+                        config, "generator",
+                        ProceduralCompositionLayer.Generator.class
+                ),
+                parseEnum(
+                        config, "anchor",
+                        ProceduralCompositionLayer.Anchor.class
+                ),
+                parseEnum(
+                        config, "primitive",
+                        ProceduralCompositionLayer.Primitive.class
+                ),
+                config.get("presetId"),
+                number(config, "offsetX"),
+                number(config, "offsetY"),
+                number(config, "offsetZ"),
+                config.getInt("sizeX"),
+                config.getInt("sizeY"),
+                config.getInt("sizeZ"),
+                number(config, "rotationDegrees"),
+                config.get("hollow"),
+                config.getInt("shellThickness"),
+                number(config, "spacing"),
+                config.getInt("maximumInstances"),
+                config.getLong("seedSalt"),
+                config.get("safeVariation")
+        );
+    }
+
+    private ConfigSpec compositionLayerSpec(
+            ProceduralCompositionLayer defaults
+    ) {
+        var spec = new ConfigSpec();
+        spec.define("name", defaults.name(), String.class::isInstance);
+        spec.define("enabled", defaults.enabled(), Boolean.class::isInstance);
+        defineEnum(spec, "operation", defaults.operation());
+        defineEnum(spec, "generator", defaults.generator());
+        defineEnum(spec, "anchor", defaults.anchor());
+        defineEnum(spec, "primitive", defaults.primitive());
+        spec.define(
+                "presetId", defaults.presetId(),
+                ProceduralPatternConfigSerializer::isBlankOrUuid
+        );
+        spec.defineInRange("offsetX", defaults.offsetX(), -30_000_000.0, 30_000_000.0);
+        spec.defineInRange("offsetY", defaults.offsetY(), -30_000_000.0, 30_000_000.0);
+        spec.defineInRange("offsetZ", defaults.offsetZ(), -30_000_000.0, 30_000_000.0);
+        spec.defineInRange("sizeX", defaults.sizeX(), 1, 4096);
+        spec.defineInRange("sizeY", defaults.sizeY(), 1, 4096);
+        spec.defineInRange("sizeZ", defaults.sizeZ(), 1, 4096);
+        spec.defineInRange(
+                "rotationDegrees", defaults.rotationDegrees(),
+                -1_000_000.0, 1_000_000.0
+        );
+        spec.define("hollow", defaults.hollow(), Boolean.class::isInstance);
+        spec.defineInRange("shellThickness", defaults.shellThickness(), 1, 4096);
+        spec.defineInRange("spacing", defaults.spacing(), 0.5, 4096.0);
+        spec.defineInRange("maximumInstances", defaults.maximumInstances(), 1, 4096);
+        spec.define("seedSalt", defaults.seedSalt(), Number.class::isInstance);
+        spec.define("safeVariation", defaults.safeVariation(), Boolean.class::isInstance);
         return spec;
     }
 

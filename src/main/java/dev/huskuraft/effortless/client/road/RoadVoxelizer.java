@@ -7,6 +7,7 @@ import java.util.List;
 
 import dev.huskuraft.effortless.client.pattern.procedural.GridPosition;
 import dev.huskuraft.effortless.client.pattern.procedural.StructuralGeometry;
+import dev.huskuraft.effortless.client.pattern.procedural.VoxelPath;
 
 /**
  * Sweeps an upright rectangular road profile along a sampled spline.
@@ -70,8 +71,8 @@ public final class RoadVoxelizer {
         }
 
         var cells = new LinkedHashMap<GridPosition, CellCandidate>();
-        var previousBandSamples = new LinkedHashMap<
-                BandLane, BandLaneSample>();
+        var bandLanes = new LinkedHashMap<
+                BandLane, ArrayList<BandLaneSample>>();
         RoadPoint previousLateral = new RoadPoint(1.0, 0.0, 0.0);
         int totalWidth = profile.totalWidth();
         for (var sample : spline.samples()) {
@@ -250,11 +251,6 @@ public final class RoadVoxelizer {
                                     position, RoadCell.Role.BAND,
                                     geometry, bandIndex
                             );
-                            var voxelCenter = new RoadPoint(
-                                    position.x() + 0.5,
-                                    position.y() + 0.5,
-                                    position.z() + 0.5
-                            );
                             var sweptCenter = top.add(0.0, -depth, 0.0);
                             var lane = new BandLane(
                                     bandIndex, side, column, depth
@@ -262,31 +258,13 @@ public final class RoadVoxelizer {
                             var laneSample = new BandLaneSample(
                                     candidate, sweptCenter
                             );
-                            var previous = previousBandSamples.put(
-                                    lane, laneSample
-                            );
-                            if (previous != null) {
-                                addBandCornerBridge(
-                                        cells, previous, laneSample
-                                );
-                            }
-                            cells.merge(
-                                    position,
-                                    new CellCandidate(
-                                            candidate,
-                                            sweptCenter.distanceSquared(
-                                                    voxelCenter
-                                            )
+                            appendBandLane(
+                                    bandLanes.computeIfAbsent(
+                                            lane,
+                                            ignored -> new ArrayList<>()
                                     ),
-                                    RoadVoxelizer::preferred
+                                    laneSample
                             );
-                            if (cells.size() > maximumCells) {
-                                return Result.failure(List.of(
-                                        "Spline contains more than "
-                                                + maximumCells
-                                                + " unique cells"
-                                ));
-                            }
                         }
                     }
                 }
@@ -299,6 +277,33 @@ public final class RoadVoxelizer {
             }
         }
 
+        for (var lane : bandLanes.values()) {
+            for (var sample : lane) {
+                var position = sample.cell().position();
+                var voxelCenter = new RoadPoint(
+                        position.x() + 0.5,
+                        position.y() + 0.5,
+                        position.z() + 0.5
+                );
+                cells.merge(
+                        position,
+                        new CellCandidate(
+                                sample.cell(),
+                                sample.sweptCenter().distanceSquared(
+                                        voxelCenter
+                                )
+                        ),
+                        RoadVoxelizer::preferred
+                );
+                if (cells.size() > maximumCells) {
+                    return Result.failure(List.of(
+                            "Spline contains more than " + maximumCells
+                                    + " unique cells"
+                    ));
+                }
+            }
+        }
+
         var ordered = cells.values().stream()
                 .map(CellCandidate::cell)
                 .sorted(Comparator.comparing(RoadCell::position))
@@ -306,90 +311,137 @@ public final class RoadVoxelizer {
         return Result.success(ordered, spline.samples(), spline.length());
     }
 
-    /** Converts a diagonal sampled step into one orthogonally joined corner. */
-    private static void addBandCornerBridge(
-            LinkedHashMap<GridPosition, CellCandidate> cells,
-            BandLaneSample previous,
+    /**
+     * Connects consecutive samples from one swept band lane with a stable
+     * face-connected voxel path. Offset lanes can move several cells between
+     * samples on a tight curve, so handling only unit diagonals leaves visible
+     * gaps in stair, slab and curb bands.
+     */
+    private static void appendBandLane(
+            ArrayList<BandLaneSample> lane,
             BandLaneSample current
     ) {
-        var first = previous.cell().position();
-        var second = current.cell().position();
-        int deltaX = second.x() - first.x();
-        int deltaY = second.y() - first.y();
-        int deltaZ = second.z() - first.z();
-        if (deltaY != 0 || Math.abs(deltaX) != 1
-                || Math.abs(deltaZ) != 1) {
+        if (lane.isEmpty()) {
+            lane.add(current);
             return;
         }
-
-        var crossFirst = new GridPosition(
-                first.x(), first.y(), second.z()
+        var previous = lane.getLast();
+        var bridge = VoxelPath.faceConnectedLine(
+                previous.cell().position(), current.cell().position()
         );
-        var crossSecond = new GridPosition(
-                second.x(), first.y(), first.z()
-        );
-        var midpoint = previous.sweptCenter()
-                .add(current.sweptCenter())
-                .mul(0.5);
-
-        var firstBridge = bridgeCandidate(
-                crossFirst, current.cell(), midpoint
-        );
-        var secondBridge = bridgeCandidate(
-                crossSecond, previous.cell(), midpoint
-        );
-        var selected = preferredOpenBridge(
-                cells, firstBridge, secondBridge
-        );
-        if (selected != null) {
-            cells.merge(
-                    selected.cell().position(), selected,
-                    RoadVoxelizer::preferred
+        int denominator = Math.max(1, bridge.size() - 1);
+        for (int index = 1; index < bridge.size(); index++) {
+            double interpolation = index / (double) denominator;
+            var sweptCenter = RoadPoint.lerp(
+                    previous.sweptCenter(),
+                    current.sweptCenter(),
+                    interpolation
             );
+            var sample = index == bridge.size() - 1
+                    ? current
+                    : new BandLaneSample(
+                            bridgeCell(
+                                    bridge.get(index),
+                                    previous.cell(),
+                                    current.cell(),
+                                    interpolation
+                            ),
+                            sweptCenter
+                    );
+            appendLoopErased(lane, sample);
         }
     }
 
-    private static CellCandidate bridgeCandidate(
-            GridPosition position,
-            RoadCell source,
-            RoadPoint midpoint
+    /**
+     * Removes a tight-offset loop as soon as the new ribbon cell reconnects
+     * to an earlier face neighbor. The result is a one-cell-wide simple path
+     * with stable order, which gives stairs and rails an unambiguous corner.
+     */
+    private static void appendLoopErased(
+            ArrayList<BandLaneSample> lane,
+            BandLaneSample current
     ) {
-        var cell = new RoadCell(
-                position, RoadCell.Role.BAND,
-                source.geometry(), source.bandIndex()
-        );
+        var position = current.cell().position();
+        int reconnect = -1;
+        for (int index = lane.size() - 2; index >= 0; index--) {
+            int distance = VoxelPath.manhattanDistance(
+                    lane.get(index).cell().position(), position
+            );
+            if (distance <= 1) {
+                reconnect = index;
+                break;
+            }
+        }
+        if (reconnect >= 0) {
+            while (lane.size() > reconnect + 1) {
+                lane.removeLast();
+            }
+        }
+        if (!lane.isEmpty()
+                && lane.getLast().cell().position().equals(position)) {
+            lane.set(
+                    lane.size() - 1,
+                    preferredLaneSample(lane.getLast(), current)
+            );
+            return;
+        }
+        lane.add(current);
+    }
+
+    private static BandLaneSample preferredLaneSample(
+            BandLaneSample first,
+            BandLaneSample second
+    ) {
+        var position = first.cell().position();
         var center = new RoadPoint(
                 position.x() + 0.5,
                 position.y() + 0.5,
                 position.z() + 0.5
         );
-        return new CellCandidate(
-                cell, midpoint.distanceSquared(center)
+        return first.sweptCenter().distanceSquared(center)
+                        <= second.sweptCenter().distanceSquared(center)
+                ? first : second;
+    }
+
+    private static RoadCell bridgeCell(
+            GridPosition position,
+            RoadCell previous,
+            RoadCell current,
+            double interpolation
+    ) {
+        return new RoadCell(
+                position, RoadCell.Role.BAND,
+                interpolate(
+                        previous.geometry(), current.geometry(), interpolation
+                ),
+                current.bandIndex()
         );
     }
 
-    private static CellCandidate preferredOpenBridge(
-            LinkedHashMap<GridPosition, CellCandidate> cells,
-            CellCandidate first,
-            CellCandidate second
+    private static StructuralGeometry interpolate(
+            StructuralGeometry first,
+            StructuralGeometry second,
+            double amount
     ) {
-        boolean firstOpen = !cells.containsKey(first.cell().position());
-        boolean secondOpen = !cells.containsKey(second.cell().position());
-        if (!firstOpen && !secondOpen) {
-            return null;
-        }
-        if (firstOpen != secondOpen) {
-            return firstOpen ? first : second;
-        }
-        int distance = Double.compare(
-                first.voxelCenterDistanceSquared(),
-                second.voxelCenterDistanceSquared()
+        return new StructuralGeometry(
+                lerp(first.path(), second.path(), amount),
+                lerp(first.lateral(), second.lateral(), amount),
+                lerp(first.depth(), second.depth(), amount),
+                lerp(first.thickness(), second.thickness(), amount),
+                lerp(first.slope(), second.slope(), amount),
+                lerp(first.tip(), second.tip(), amount),
+                lerp(first.junction(), second.junction(), amount),
+                lerp(first.tangentX(), second.tangentX(), amount),
+                lerp(first.tangentY(), second.tangentY(), amount),
+                lerp(first.tangentZ(), second.tangentZ(), amount),
+                lerp(first.normalX(), second.normalX(), amount),
+                lerp(first.normalY(), second.normalY(), amount),
+                lerp(first.normalZ(), second.normalZ(), amount)
         );
-        if (distance != 0) {
-            return distance < 0 ? first : second;
-        }
-        return first.cell().position().compareTo(second.cell().position()) <= 0
-                ? first : second;
+    }
+
+    private static double lerp(double first, double second, double amount) {
+        return first + (second - first) * amount;
     }
 
     private static CellCandidate preferred(

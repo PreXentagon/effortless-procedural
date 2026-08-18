@@ -22,6 +22,7 @@ public class SettingOptionsList extends AbstractEntryList<SettingOptionsList.Ent
 
     private boolean showIcon;
     private boolean showButton;
+    private boolean fullWidthEntries;
 
     public SettingOptionsList(Entrance entrance, int x, int y, int width, int height) {
         super(entrance, x, y, width, height);
@@ -50,6 +51,15 @@ public class SettingOptionsList extends AbstractEntryList<SettingOptionsList.Ent
 
     public void setShowButton(boolean visible) {
         this.showButton = visible;
+        this.recreateChildren();
+    }
+
+    public boolean isFullWidthEntries() {
+        return fullWidthEntries;
+    }
+
+    public void setFullWidthEntries(boolean fullWidthEntries) {
+        this.fullWidthEntries = fullWidthEntries;
         this.recreateChildren();
     }
 
@@ -126,6 +136,15 @@ public class SettingOptionsList extends AbstractEntryList<SettingOptionsList.Ent
 
         protected Entry(Entrance entrance, EntryList entryList, T item) {
             super(entrance, entryList, item);
+        }
+
+        @Override
+        public int getWidth() {
+            if (getEntryList() instanceof SettingOptionsList options
+                    && options.isFullWidthEntries()) {
+                return Math.max(1, options.getWidth() - 8);
+            }
+            return super.getWidth();
         }
     }
 

@@ -11,6 +11,9 @@ Procedural recipes are compiled on the client into placement data already suppor
 Effortless Structure server. No procedural rule type or fork-specific packet is required on the server. Current
 development and validation focus on Minecraft 1.21.1 with NeoForge.
 
+The implementation boundaries and extension rules are documented in the
+[client generation engine guide](docs/ENGINE.md).
+
 <div style="text-align: center">
     <a href="https://modrinth.com/mod/effortless">Upstream Modrinth</a>
     <span> | </span>
@@ -31,7 +34,7 @@ development and validation focus on Minecraft 1.21.1 with NeoForge.
   items or making incompatible modifications.
 - Item Randomizer: This mod includes an item randomizer that lets players place blocks and entities randomly from a
   pre-defined list.
-- Pattern Workbench: Create named material palettes with weighted selection, ordered gradients, seeded noise, spatial
+- Effortless Workbench: Create named material recipes with weighted selection, ordered gradients, seeded noise, spatial
   masks, adjacency and directional rules, spacing, quotas, cleanup, and deterministic seeds.
 - Server-Compatible Compilation: Client-only procedural recipes resolve into the original server-supported pattern
   representation before placement.
@@ -75,9 +78,10 @@ development and validation focus on Minecraft 1.21.1 with NeoForge.
 
 ## How to Use
 
-- Hold **LEFT_ALT/LEFT_OPTION** key to open **Build Mode Radial**. You can switch build modes to create different
-  structures. There are buttons for **Undo/Redo**, **Replace**, **Settings**, **Pattern** and **Clipboard** on the
-  left side.
+- Press **LEFT_ALT/LEFT_OPTION** to open the **Effortless Workbench**. The scrollable tool rail above the live preview
+  selects the real placement tool; pressing the selected tool again expands its stock features or spline/tree subtype.
+  Recipes remain on the left, the active tool and recipe inspector is on the right, and **Clipboard** and **Settings**
+  are available from the footer.
 
 - Click **ATTACK/DESTROY** key to start destroying blocks.
 - Click **USE_ITEM/PLACE_BLOCK** key to start placing/interacting blocks.
@@ -87,8 +91,8 @@ development and validation focus on Minecraft 1.21.1 with NeoForge.
 
 ### Build Modes
 
-- Build modes are the basic shapes you need to choose when creating a structure. There are currently 13 different types
-  of shapes. Each one has unique features like hollow or filled.
+- Build modes are the basic shapes used to create a structure. The workbench includes every stock shape plus the
+  client-compiled spline and tree generators. Each tool exposes its applicable features in the expandable rail.
 
 - **Disable**: Place in the vanilla way.
 - **Single**: Place with increased reach distance.

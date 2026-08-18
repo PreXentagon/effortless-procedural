@@ -1,32 +1,33 @@
 package dev.huskuraft.effortless.client.road;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import java.util.Set;
 
 import dev.huskuraft.effortless.building.Context;
 import dev.huskuraft.effortless.building.clipboard.BlockData;
 import dev.huskuraft.effortless.building.clipboard.Snapshot;
 import dev.huskuraft.effortless.building.config.ProceduralSafetyConfig;
-import dev.huskuraft.effortless.client.pattern.procedural.Coordinate;
 import dev.huskuraft.effortless.client.pattern.procedural.CoordinateLookup;
 import dev.huskuraft.effortless.client.pattern.procedural.CoordinateSpace;
 import dev.huskuraft.effortless.client.pattern.procedural.ExistingNeighborLookup;
+import dev.huskuraft.effortless.client.pattern.procedural.ExplicitSnapshotAssembler;
 import dev.huskuraft.effortless.client.pattern.procedural.GenerationProgress;
-import dev.huskuraft.effortless.client.pattern.procedural.GenerationRequest;
+import dev.huskuraft.effortless.client.pattern.procedural.GenerationBounds;
 import dev.huskuraft.effortless.client.pattern.procedural.GridPosition;
 import dev.huskuraft.effortless.client.pattern.procedural.ProceduralContextCompiler;
-import dev.huskuraft.effortless.client.pattern.procedural.ProceduralGenerator;
+import dev.huskuraft.effortless.client.pattern.procedural.ProceduralCompositionEngine;
 import dev.huskuraft.effortless.client.pattern.procedural.ProceduralMaterial;
 import dev.huskuraft.effortless.client.pattern.procedural.ProceduralPresetAdapter;
+import dev.huskuraft.effortless.client.pattern.procedural.ProceduralRecipeEngine;
 import dev.huskuraft.effortless.client.pattern.procedural.StableRandom;
-import dev.huskuraft.effortless.client.pattern.procedural.StructuralBlockStateResolver;
 import dev.huskuraft.effortless.client.pattern.procedural.StructuralGeometry;
+import dev.huskuraft.effortless.client.pattern.procedural.StructuralStateBatchResolver;
 import dev.huskuraft.effortless.client.pattern.procedural.config.PatternMaterialSource;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralPatternLibrary;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralPatternPreset;
@@ -56,6 +57,7 @@ public final class RoadPatternCompiler {
                 road,
                 true,
                 ProceduralSafetyConfig.DEFAULT,
+                localLibrary(preset),
                 Map.of(),
                 Optional.empty(), List.of(),
                 Optional.empty(), Optional.empty()
@@ -71,6 +73,7 @@ public final class RoadPatternCompiler {
     ) {
         return compile(
                 player, source, preset, road, true, safety,
+                localLibrary(preset),
                 Map.of(), Optional.empty(), List.of(),
                 Optional.empty(), Optional.empty()
         );
@@ -92,6 +95,7 @@ public final class RoadPatternCompiler {
         }
         return compile(
                 player, source, preset, road, true, safety,
+                library,
                 roles.recipes(), roles.damageRecipe(),
                 roles.bandRecipes(), roles.cutoutWallRecipe(),
                 roles.cutoutFloorRecipe()
@@ -115,6 +119,7 @@ public final class RoadPatternCompiler {
                 road,
                 false,
                 ProceduralSafetyConfig.DEFAULT,
+                localLibrary(preset),
                 Map.of(),
                 Optional.empty(), List.of(),
                 Optional.empty(), Optional.empty()
@@ -130,6 +135,7 @@ public final class RoadPatternCompiler {
     ) {
         return compile(
                 player, source, preset, road, false, safety,
+                localLibrary(preset),
                 Map.of(), Optional.empty(), List.of(),
                 Optional.empty(), Optional.empty()
         );
@@ -151,6 +157,7 @@ public final class RoadPatternCompiler {
         }
         return compile(
                 player, source, preset, road, false, safety,
+                library,
                 roles.recipes(), roles.damageRecipe(),
                 roles.bandRecipes(), roles.cutoutWallRecipe(),
                 roles.cutoutFloorRecipe()
@@ -164,6 +171,7 @@ public final class RoadPatternCompiler {
             RoadVoxelizer.Result road,
             boolean enforceReach,
             ProceduralSafetyConfig safety,
+            ProceduralPatternLibrary library,
             Map<RoadCell.Role, ProceduralPatternPreset> rolePresets,
             Optional<ProceduralPatternPreset> damagePreset,
             List<ProceduralPatternPreset> bandPresets,
@@ -198,21 +206,17 @@ public final class RoadPatternCompiler {
             );
         }
 
-        int minX = road.cells().stream()
-                .mapToInt(cell -> cell.position().x()).min().orElseThrow();
-        int minY = road.cells().stream()
-                .mapToInt(cell -> cell.position().y()).min().orElseThrow();
-        int minZ = road.cells().stream()
-                .mapToInt(cell -> cell.position().z()).min().orElseThrow();
-        int maxX = road.cells().stream()
-                .mapToInt(cell -> cell.position().x()).max().orElseThrow();
-        int maxY = road.cells().stream()
-                .mapToInt(cell -> cell.position().y()).max().orElseThrow();
-        int maxZ = road.cells().stream()
-                .mapToInt(cell -> cell.position().z()).max().orElseThrow();
+        var bounds = GenerationBounds.enclosing(road.cells().stream()
+                .map(RoadCell::position)
+                .toList());
+        int minX = bounds.minX();
+        int minY = bounds.minY();
+        int minZ = bounds.minZ();
+        int maxX = bounds.maxX();
+        int maxY = bounds.maxY();
+        int maxZ = bounds.maxZ();
 
-        long boxVolume = (long) (maxX - minX + 1)
-                * (maxY - minY + 1) * (maxZ - minZ + 1);
+        long boxVolume = bounds.volume();
         int serverVolumeLimit = source.configs().constraintConfig()
                 .maxStructureCopyPasteVolume();
         if (boxVolume > serverVolumeLimit) {
@@ -288,85 +292,33 @@ public final class RoadPatternCompiler {
                 RoadCell.Role.FOUNDATION
         )) {
             var rolePreset = recipes.getOrDefault(role, effectivePreset);
-            var effectiveRole = rolePreset.materialSource()
-                    == PatternMaterialSource.CUSTOM_PALETTE
-                    ? rolePreset
-                    : ProceduralContextCompiler.resolvePreviewMaterials(
-                            player, rolePreset
-                    );
-            boolean roleWorld = effectiveRole.advanced().coordinateSpace()
-                    == CoordinateSpace.WORLD;
             var rolePositions = cellsByRelativePosition.entrySet().stream()
                     .filter(entry -> entry.getValue().role() == role)
-                    .map(entry -> generationPosition(
-                            entry.getKey(), roleWorld, minX, minY, minZ
-                    ))
+                    .map(Map.Entry::getKey)
                     .toList();
             if (rolePositions.isEmpty()) {
                 continue;
             }
-            var roleAdaptation = ProceduralPresetAdapter.adapt(effectiveRole);
-            if (!roleAdaptation.isSuccess()) {
-                return CompilationResult.failure(
-                        "Spline " + role.name().toLowerCase()
-                                + " pattern is invalid",
-                        roleAdaptation.errors()
-                );
-            }
-            ExistingNeighborLookup roleNeighbors =
-                    effectiveRole.inspectExistingWorld()
-                    ? worldNeighbors(
-                            player, roleWorld, minX, minY, minZ
-                    )
-                    : ExistingNeighborLookup.NONE;
-            long roleSeed = effectiveSeed(
-                    effectiveRole, road.cells().size(),
-                    minX, minY, minZ, maxX, maxY, maxZ
-            );
-            roleSeed = StableRandom.mixSeed(
-                    roleSeed,
-                    StableRandom.stableStringHash(role.name())
-            );
-            var request = new GenerationRequest<>(
-                    roleSeed,
+            var generated = generateRecipe(
+                    player,
+                    rolePreset,
+                    "Spline " + role.name().toLowerCase(),
+                    role.name(),
                     rolePositions,
-                    roleAdaptation.ruleSet().orElseThrow(),
-                    roleNeighbors,
-                    Math.min(
-                            serverVolumeLimit,
-                            safety.maxCompiledPositions()
-                    ),
-                    Thread.currentThread()::isInterrupted,
-                    GenerationProgress.NONE,
-                    coordinates(
-                            cellsByRelativePosition,
-                            roleWorld,
-                            minX, minY, minZ
-                    )
-            );
-            var generated = ProceduralGenerator.generate(
-                    request,
-                    safety.maxEstimatedWork()
+                    cellsByRelativePosition,
+                    road.cells().size(),
+                    minX, minY, minZ,
+                    maxX, maxY, maxZ,
+                    serverVolumeLimit,
+                    safety
             );
             if (!generated.isSuccess()) {
-                var failure = generated.failure().orElseThrow();
                 return CompilationResult.failure(
-                        "Spline " + role.name().toLowerCase() + ": "
-                                + failure.message(),
-                        failure.details()
+                        generated.message(), generated.details()
                 );
             }
-            generated.placements().forEach((position, material) ->
-                    generatedMaterials.put(
-                            relativePosition(
-                                    position, roleWorld, minX, minY, minZ
-                            ),
-                            material
-                    ));
-            generated.traversal().forEach(position ->
-                    generatedTraversal.add(relativePosition(
-                            position, roleWorld, minX, minY, minZ
-                    )));
+            generatedMaterials.putAll(generated.materials());
+            generatedTraversal.addAll(generated.traversal());
         }
         for (int bandIndex = 0;
                 bandIndex < preset.advanced().roadProfile()
@@ -403,80 +355,34 @@ public final class RoadPatternCompiler {
         }
         var selectedCutoutSurface = new HashSet<GridPosition>();
         if (damagePreset.isPresent()) {
-            var configuredDamage = damagePreset.orElseThrow();
-            var effectiveDamage = configuredDamage.materialSource()
-                    == PatternMaterialSource.CUSTOM_PALETTE
-                    ? configuredDamage
-                    : ProceduralContextCompiler.resolvePreviewMaterials(
-                            player, configuredDamage
-                    );
-            boolean damageWorld = effectiveDamage.advanced()
-                    .coordinateSpace() == CoordinateSpace.WORLD;
             var overlayPositions = cellsByRelativePosition.entrySet().stream()
                     .filter(entry -> entry.getValue().role()
                             == RoadCell.Role.SURFACE
                             || entry.getValue().role()
                             == RoadCell.Role.MARKING)
-                    .map(entry -> generationPosition(
-                            entry.getKey(), damageWorld, minX, minY, minZ
-                    ))
+                    .map(Map.Entry::getKey)
                     .toList();
             if (!overlayPositions.isEmpty()) {
-                var damageAdaptation = ProceduralPresetAdapter.adapt(
-                        effectiveDamage
-                );
-                if (!damageAdaptation.isSuccess()) {
-                    return CompilationResult.failure(
-                            "Spline damage pattern is invalid",
-                            damageAdaptation.errors()
-                    );
-                }
-                long damageSeed = effectiveSeed(
-                        effectiveDamage, road.cells().size(),
-                        minX, minY, minZ, maxX, maxY, maxZ
-                );
-                damageSeed = StableRandom.mixSeed(
-                        damageSeed,
-                        StableRandom.stableStringHash("SPLINE_DAMAGE")
-                );
-                var request = new GenerationRequest<>(
-                        damageSeed,
+                var generated = generateRecipe(
+                        player,
+                        damagePreset.orElseThrow(),
+                        "Spline damage",
+                        "SPLINE_DAMAGE",
                         overlayPositions,
-                        damageAdaptation.ruleSet().orElseThrow(),
-                        effectiveDamage.inspectExistingWorld()
-                                ? worldNeighbors(
-                                        player, damageWorld,
-                                        minX, minY, minZ
-                                )
-                                : ExistingNeighborLookup.NONE,
-                        Math.min(
-                                serverVolumeLimit,
-                                safety.maxCompiledPositions()
-                        ),
-                        Thread.currentThread()::isInterrupted,
-                        GenerationProgress.NONE,
-                        coordinates(
-                                cellsByRelativePosition,
-                                damageWorld,
-                                minX, minY, minZ
-                        )
-                );
-                var generated = ProceduralGenerator.generate(
-                        request, safety.maxEstimatedWork()
+                        cellsByRelativePosition,
+                        road.cells().size(),
+                        minX, minY, minZ,
+                        maxX, maxY, maxZ,
+                        serverVolumeLimit,
+                        safety
                 );
                 if (!generated.isSuccess()) {
-                    var failure = generated.failure().orElseThrow();
                     return CompilationResult.failure(
-                            "Spline damage: " + failure.message(),
-                            failure.details()
+                            generated.message(), generated.details()
                     );
                 }
-                generated.placements().forEach((position, material) -> {
+                generated.materials().forEach((relative, material) -> {
                     if (material.kind() != ProceduralMaterial.Kind.SKIP) {
-                        var relative = relativePosition(
-                                position, damageWorld,
-                                minX, minY, minZ
-                        );
                         generatedMaterials.put(
                                 relative,
                                 material
@@ -558,91 +464,115 @@ public final class RoadPatternCompiler {
             generatedTraversal.addAll(generated.traversal());
         }
 
-        var orderedTraversal = generatedTraversal.stream()
-                .distinct()
-                .sorted(GridPosition.TRAVERSAL_ORDER)
-                .toList();
-
-        int snapshotMinX = cellsByRelativePosition.values().stream()
-                .mapToInt(cell -> cell.position().x()).min().orElse(minX);
-        int snapshotMinY = cellsByRelativePosition.values().stream()
-                .mapToInt(cell -> cell.position().y()).min().orElse(minY);
-        int snapshotMinZ = cellsByRelativePosition.values().stream()
-                .mapToInt(cell -> cell.position().z()).min().orElse(minZ);
-        int snapshotMaxX = cellsByRelativePosition.values().stream()
-                .mapToInt(cell -> cell.position().x()).max().orElse(maxX);
-        int snapshotMaxY = cellsByRelativePosition.values().stream()
-                .mapToInt(cell -> cell.position().y()).max().orElse(maxY);
-        int snapshotMaxZ = cellsByRelativePosition.values().stream()
-                .mapToInt(cell -> cell.position().z()).max().orElse(maxZ);
-        long finalBoxVolume = (long) (snapshotMaxX - snapshotMinX + 1)
-                * (snapshotMaxY - snapshotMinY + 1)
-                * (snapshotMaxZ - snapshotMinZ + 1);
-        if (finalBoxVolume > serverVolumeLimit) {
-            return CompilationResult.failure(
-                    "Spline bounding volume exceeds the server clipboard limit",
-                    List.of(finalBoxVolume + " blocks > "
-                            + serverVolumeLimit + " allowed")
-            );
-        }
-        if (generatedMaterials.size() > safety.maxCompiledPositions()) {
-            return CompilationResult.failure(
-                    "Spline contains too many explicit blocks",
-                    List.of(generatedMaterials.size() + " blocks > "
-                            + safety.maxCompiledPositions())
-            );
-        }
-        long finalEstimatedBytes = generatedMaterials.size()
-                * ProceduralContextCompiler.ESTIMATED_BYTES_PER_POSITION;
-        if (finalEstimatedBytes > safety.maxEstimatedMemoryBytes()) {
-            return CompilationResult.failure(
-                    "Spline compilation is estimated to use too much memory",
-                    List.of(finalEstimatedBytes + " estimated bytes > "
-                            + safety.maxEstimatedMemoryBytes())
-            );
-        }
-        if (enforceReach) {
-            double reach = source.maxReachDistance();
-            var outOfReach = cellsByRelativePosition.values().stream()
+        if (!effectivePreset.advanced().compositionLayers().isEmpty()) {
+            var basePositions = generatedMaterials.entrySet().stream()
+                    .filter(entry -> entry.getValue().kind()
+                            != ProceduralMaterial.Kind.SKIP)
+                    .map(entry -> cellsByRelativePosition.get(entry.getKey()))
+                    .filter(java.util.Objects::nonNull)
                     .map(RoadCell::position)
-                    .map(RoadPatternCompiler::blockPosition)
-                    .filter(position -> position.getCenter()
-                            .distance(player.getEyePosition()) > reach)
-                    .findFirst();
-            if (outOfReach.isPresent()) {
+                    .collect(java.util.stream.Collectors.toCollection(
+                            java.util.LinkedHashSet::new
+                    ));
+            var composition = ProceduralCompositionEngine.compose(
+                    basePositions,
+                    road.samples(),
+                    library,
+                    effectivePreset,
+                    Math.min(
+                            serverVolumeLimit,
+                            safety.maxCompiledPositions()
+                    )
+            );
+            if (!composition.isSuccess()) {
                 return CompilationResult.failure(
-                        "Spline contains a block beyond the server reach limit",
-                        List.of(outOfReach.get() + " is farther than "
-                                + reach + " blocks")
+                        "Scene composition is invalid",
+                        composition.errors()
+                );
+            }
+            var allowed = Set.copyOf(composition.positions());
+            generatedMaterials.entrySet().removeIf(entry -> {
+                var cell = cellsByRelativePosition.get(entry.getKey());
+                return cell == null || !allowed.contains(cell.position());
+            });
+            cellsByRelativePosition.entrySet().removeIf(
+                    entry -> !allowed.contains(entry.getValue().position())
+            );
+
+            var additionsByPreset = new LinkedHashMap<
+                    ProceduralPatternPreset, List<GridPosition>>();
+            composition.additions().entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey(
+                            GridPosition.TRAVERSAL_ORDER
+                    ))
+                    .forEach(entry -> {
+                        var absolute = entry.getKey();
+                        var relative = relative(
+                                absolute, minX, minY, minZ
+                        );
+                        var generatedCell = entry.getValue();
+                        cellsByRelativePosition.put(
+                                relative,
+                                new RoadCell(
+                                        absolute,
+                                        RoadCell.Role.SURFACE,
+                                        generatedCell.geometry()
+                                )
+                        );
+                        additionsByPreset.computeIfAbsent(
+                                generatedCell.preset(),
+                                ignored -> new ArrayList<>()
+                        ).add(relative);
+                    });
+            for (var entry : additionsByPreset.entrySet()) {
+                var generated = generateRecipe(
+                        player,
+                        entry.getKey(),
+                        "Composition layer",
+                        "COMPOSITION_" + entry.getKey().id(),
+                        entry.getValue(),
+                        cellsByRelativePosition,
+                        composition.positions().size(),
+                        minX, minY, minZ, maxX, maxY, maxZ,
+                        serverVolumeLimit,
+                        safety
+                );
+                if (!generated.isSuccess()) {
+                    return CompilationResult.failure(
+                            generated.message(), generated.details()
+                    );
+                }
+                generatedMaterials.putAll(generated.materials());
+            }
+            for (var absolute : composition.erasers()) {
+                var relative = relative(absolute, minX, minY, minZ);
+                cellsByRelativePosition.putIfAbsent(
+                        relative,
+                        new RoadCell(
+                                absolute,
+                                RoadCell.Role.CUTOUT_WALL,
+                                StructuralGeometry.NONE
+                        )
+                );
+                generatedMaterials.put(
+                        relative,
+                        ProceduralMaterial.eraser()
                 );
             }
         }
 
-        var anchor = new BlockPosition(
-                snapshotMinX, snapshotMinY, snapshotMinZ
-        );
         var blocks = new ArrayList<BlockData>(generatedMaterials.size());
         var air = Items.AIR.item().getBlock().getDefaultBlockState();
-        boolean containsPlacement = false;
-        boolean containsErase = false;
-        for (var generation : orderedTraversal) {
+        for (var generation : generatedMaterials.keySet().stream()
+                .sorted(GridPosition.TRAVERSAL_ORDER).toList()) {
             ProceduralMaterial material =
                     generatedMaterials.get(generation);
             if (material.kind() == ProceduralMaterial.Kind.SKIP) {
                 continue;
             }
-            containsErase |= material.kind()
-                    == ProceduralMaterial.Kind.ERASER;
-            containsPlacement |= material.kind()
-                    == ProceduralMaterial.Kind.BLOCK;
             var absolute = cellsByRelativePosition.get(generation).position();
-            var relative = new BlockPosition(
-                    absolute.x() - snapshotMinX,
-                    absolute.y() - snapshotMinY,
-                    absolute.z() - snapshotMinZ
-            );
             blocks.add(new BlockData(
-                    relative,
+                    blockPosition(absolute),
                     material.kind() == ProceduralMaterial.Kind.ERASER
                             ? air
                             : material.placeableBlock().orElseThrow()
@@ -650,40 +580,41 @@ public final class RoadPatternCompiler {
                     null
             ));
         }
-        if (blocks.isEmpty()) {
-            return CompilationResult.failure(
-                    "Every spline cell was skipped",
-                    List.of("Nothing would be sent to the server")
-            );
-        }
-        var constraints = source.configs().constraintConfig();
-        if (containsPlacement && !constraints.allowPlaceBlocks()) {
-            return CompilationResult.failure(
-                    "The server does not allow block placement",
-                    List.of()
-            );
-        }
-        if (containsErase && !constraints.allowBreakBlocks()) {
-            return CompilationResult.failure(
-                    "The server does not allow block breaking",
-                    List.of()
-            );
-        }
-        blocks = resolvePlacementStates(
-                blocks, cellsByRelativePosition.values(),
-                snapshotMinX, snapshotMinY, snapshotMinZ
+        var geometries = new LinkedHashMap<
+                GridPosition, StructuralGeometry>();
+        cellsByRelativePosition.values().forEach(cell ->
+                geometries.put(cell.position(), cell.geometry())
         );
-        var snapshot = new Snapshot(
-                "Procedural spline",
-                System.currentTimeMillis(),
-                blocks
-        );
+        blocks = new ArrayList<>(StructuralStateBatchResolver.resolve(
+                blocks, geometries
+        ));
+        return fromAssembly(ExplicitSnapshotAssembler.assemble(
+                player,
+                source,
+                safety,
+                new ExplicitSnapshotAssembler.Request(
+                        "Procedural spline",
+                        "Spline",
+                        blocks,
+                        enforceReach
+                )
+        ));
+    }
+
+    private static CompilationResult fromAssembly(
+            ExplicitSnapshotAssembler.Result assembled
+    ) {
+        if (!assembled.isSuccess()) {
+            return CompilationResult.failure(
+                    assembled.message(), assembled.details()
+            );
+        }
         return CompilationResult.success(
-                snapshot,
-                anchor,
-                blocks.size(),
-                finalBoxVolume,
-                finalEstimatedBytes
+                assembled.snapshot().orElseThrow(),
+                assembled.anchor().orElseThrow(),
+                assembled.positionCount(),
+                assembled.boundingVolume(),
+                assembled.estimatedMemoryBytes()
         );
     }
 
@@ -710,12 +641,6 @@ public final class RoadPatternCompiler {
                 : ProceduralContextCompiler.resolvePreviewMaterials(
                         player, configuredPreset
                 );
-        var adaptation = ProceduralPresetAdapter.adapt(effective);
-        if (!adaptation.isSuccess()) {
-            return RecipeGeneration.failure(
-                    label + " pattern is invalid", adaptation.errors()
-            );
-        }
         boolean world = effective.advanced().coordinateSpace()
                 == CoordinateSpace.WORLD;
         var positions = relativePositions.stream()
@@ -730,28 +655,33 @@ public final class RoadPatternCompiler {
         seed = StableRandom.mixSeed(
                 seed, StableRandom.stableStringHash(seedSalt)
         );
-        var request = new GenerationRequest<>(
-                seed,
-                positions,
-                adaptation.ruleSet().orElseThrow(),
-                effective.inspectExistingWorld()
-                        ? worldNeighbors(player, world, minX, minY, minZ)
-                        : ExistingNeighborLookup.NONE,
-                Math.min(serverVolumeLimit, safety.maxCompiledPositions()),
-                Thread.currentThread()::isInterrupted,
-                GenerationProgress.NONE,
-                coordinates(
-                        cellsByRelativePosition,
-                        world, minX, minY, minZ
+        var generated = ProceduralRecipeEngine.generate(
+                new ProceduralRecipeEngine.Request(
+                        effective,
+                        label,
+                        seed,
+                        positions,
+                        effective.inspectExistingWorld()
+                                ? worldNeighbors(
+                                        player, world, minX, minY, minZ
+                                )
+                                : ExistingNeighborLookup.NONE,
+                        Math.min(
+                                serverVolumeLimit,
+                                safety.maxCompiledPositions()
+                        ),
+                        safety.maxEstimatedWork(),
+                        Thread.currentThread()::isInterrupted,
+                        GenerationProgress.NONE,
+                        coordinates(
+                                cellsByRelativePosition,
+                                world, minX, minY, minZ
+                        )
                 )
         );
-        var generated = ProceduralGenerator.generate(
-                request, safety.maxEstimatedWork()
-        );
         if (!generated.isSuccess()) {
-            var failure = generated.failure().orElseThrow();
             return RecipeGeneration.failure(
-                    label + ": " + failure.message(), failure.details()
+                    generated.message(), generated.details()
             );
         }
         var materials = new LinkedHashMap<
@@ -808,51 +738,6 @@ public final class RoadPatternCompiler {
         boolean isSuccess() {
             return message.isEmpty();
         }
-    }
-
-    private static ArrayList<BlockData> resolvePlacementStates(
-            List<BlockData> blocks,
-            Iterable<RoadCell> cells,
-            int minX,
-            int minY,
-            int minZ
-    ) {
-        var geometries = new HashMap<GridPosition, StructuralGeometry>();
-        for (var cell : cells) {
-            geometries.put(
-                    relative(cell.position(), minX, minY, minZ),
-                    cell.geometry()
-            );
-        }
-        var occupied = new HashSet<GridPosition>();
-        var rawStates = new HashMap<GridPosition,
-                dev.huskuraft.universal.api.core.BlockState>();
-        for (var data : blocks) {
-            var position = grid(data.blockPosition());
-            if (data.blockState() != null && !data.blockState().isAir()) {
-                occupied.add(position);
-                rawStates.put(position, data.blockState());
-            }
-        }
-        var resolved = new ArrayList<BlockData>(blocks.size());
-        for (var data : blocks) {
-            var position = grid(data.blockPosition());
-            var geometry = geometries.get(position);
-            if (geometry == null || data.blockState() == null
-                    || data.blockState().isAir()) {
-                resolved.add(data);
-                continue;
-            }
-            resolved.add(new BlockData(
-                    data.blockPosition(),
-                    StructuralBlockStateResolver.resolve(
-                            data.blockState(), position, geometry,
-                            occupied, geometries, rawStates
-                    ),
-                    data.entityTag()
-            ));
-        }
-        return resolved;
     }
 
     private static GridPosition relative(
@@ -986,98 +871,41 @@ public final class RoadPatternCompiler {
                     List.of()
             );
         }
-        if (!source.configs().constraintConfig().allowBreakBlocks()) {
-            return CompilationResult.failure(
-                    "The server does not allow block breaking",
-                    List.of()
-            );
-        }
-
-        int minX = road.cells().stream()
-                .mapToInt(cell -> cell.position().x()).min().orElseThrow();
-        int minY = road.cells().stream()
-                .mapToInt(cell -> cell.position().y()).min().orElseThrow();
-        int minZ = road.cells().stream()
-                .mapToInt(cell -> cell.position().z()).min().orElseThrow();
-        int maxX = road.cells().stream()
-                .mapToInt(cell -> cell.position().x()).max().orElseThrow();
-        int maxY = road.cells().stream()
-                .mapToInt(cell -> cell.position().y()).max().orElseThrow();
-        int maxZ = road.cells().stream()
-                .mapToInt(cell -> cell.position().z()).max().orElseThrow();
-        long boxVolume = (long) (maxX - minX + 1)
-                * (maxY - minY + 1) * (maxZ - minZ + 1);
-        int serverVolumeLimit = source.configs().constraintConfig()
-                .maxStructureCopyPasteVolume();
-        if (boxVolume > serverVolumeLimit) {
-            return CompilationResult.failure(
-                    "Road bounding volume exceeds the server clipboard limit",
-                    List.of(boxVolume + " blocks > "
-                            + serverVolumeLimit + " allowed")
-            );
-        }
-        if (road.cells().size() > safety.maxCompiledPositions()) {
-            return CompilationResult.failure(
-                    "Road contains too many explicit blocks",
-                    List.of(road.cells().size() + " blocks > "
-                            + safety.maxCompiledPositions())
-            );
-        }
-        long estimatedBytes = road.cells().size()
-                * ProceduralContextCompiler.ESTIMATED_BYTES_PER_POSITION;
-        if (estimatedBytes > safety.maxEstimatedMemoryBytes()) {
-            return CompilationResult.failure(
-                    "Road clearing is estimated to use too much memory",
-                    List.of(estimatedBytes + " estimated bytes > "
-                            + safety.maxEstimatedMemoryBytes())
-            );
-        }
-
-        double reach = source.maxReachDistance();
-        var outOfReach = road.cells().stream()
-                .map(RoadCell::position)
-                .map(RoadPatternCompiler::blockPosition)
-                .filter(position -> position.getCenter()
-                        .distance(player.getEyePosition()) > reach)
-                .findFirst();
-        if (outOfReach.isPresent()) {
-            return CompilationResult.failure(
-                    "Road contains a block beyond the server reach limit",
-                    List.of(outOfReach.get() + " is farther than "
-                            + reach + " blocks")
-            );
-        }
-
-        var anchor = new BlockPosition(minX, minY, minZ);
         var air = Items.AIR.item().getBlock().getDefaultBlockState();
         var blocks = new ArrayList<BlockData>(road.cells().size());
         for (var cell : road.cells()) {
             var absolute = cell.position();
             blocks.add(new BlockData(
-                    new BlockPosition(
-                            absolute.x() - minX,
-                            absolute.y() - minY,
-                            absolute.z() - minZ
-                    ),
+                    blockPosition(absolute),
                     air,
                     null
             ));
         }
-        return CompilationResult.success(
-                new Snapshot(
+        return fromAssembly(ExplicitSnapshotAssembler.assemble(
+                player,
+                source,
+                safety,
+                new ExplicitSnapshotAssembler.Request(
                         "Procedural road clearing",
-                        System.currentTimeMillis(),
-                        blocks
-                ),
-                anchor,
-                blocks.size(),
-                boxVolume,
-                estimatedBytes
-        );
+                        "Road",
+                        blocks,
+                        true
+                )
+        ));
     }
 
     private static BlockPosition blockPosition(GridPosition position) {
         return new BlockPosition(position.x(), position.y(), position.z());
+    }
+
+    private static ProceduralPatternLibrary localLibrary(
+            ProceduralPatternPreset preset
+    ) {
+        return new ProceduralPatternLibrary(
+                false,
+                preset.id(),
+                List.of(preset)
+        );
     }
 
     private static long effectiveSeed(

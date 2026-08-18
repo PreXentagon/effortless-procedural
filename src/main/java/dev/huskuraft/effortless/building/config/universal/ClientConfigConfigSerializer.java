@@ -21,6 +21,10 @@ public class ClientConfigConfigSerializer implements ConfigSerializer<ClientConf
     //    private static final String KEY_SHOW_OTHER_PLAYERS_BUILD_TOOLTIPS = "showOtherPlayersBuildTooltips";
     private static final String KEY_SHOW_BLOCK_PREVIEW = "showBlockPreview";
     private static final String KEY_MAX_RENDER_VOLUME = "maxRenderVolume";
+    private static final String KEY_ERASER_PREVIEW_BLOCK =
+            "eraserPreviewBlock";
+    private static final String KEY_CUTOUT_PREVIEW_BLOCK =
+            "cutoutPreviewBlock";
     private static final String KEY_PROCEDURAL_SAFETY = "proceduralSafety";
     private static final String KEY_SHOW_PREPARATION_MESSAGES =
             "showPreparationMessages";
@@ -53,6 +57,16 @@ public class ClientConfigConfigSerializer implements ConfigSerializer<ClientConf
         spec.define(List.of(KEY_RENDER, KEY_SHOW_OTHER_PLAYERS_BUILD), () -> getDefault().renderConfig().showOtherPlayersBuild(), Boolean.class::isInstance);
 //        spec.define(List.of(KEY_RENDER, KEY_SHOW_OTHER_PLAYERS_BUILD_TOOLTIPS), () -> getDefault().renderConfig().showOtherPlayersBuildTooltips(), Boolean.class::isInstance);
         spec.defineInRange(List.of(KEY_RENDER, KEY_MAX_RENDER_VOLUME), getDefault().renderConfig().maxRenderVolume(), RenderConfig.MAX_RENDER_VOLUME_MIN, RenderConfig.MAX_RENDER_VOLUME_MAX);
+        spec.define(
+                List.of(KEY_RENDER, KEY_ERASER_PREVIEW_BLOCK),
+                () -> getDefault().renderConfig().eraserPreviewBlockId(),
+                String.class::isInstance
+        );
+        spec.define(
+                List.of(KEY_RENDER, KEY_CUTOUT_PREVIEW_BLOCK),
+                () -> getDefault().renderConfig().cutoutPreviewBlockId(),
+                String.class::isInstance
+        );
         var safety = getDefault().proceduralSafetyConfig();
         spec.define(
                 List.of(
@@ -121,7 +135,13 @@ public class ClientConfigConfigSerializer implements ConfigSerializer<ClientConf
                         false,
 //                        config.get(List.of(KEY_RENDER, KEY_SHOW_OTHER_PLAYERS_BUILD_TOOLTIPS)),
                         config.get(List.of(KEY_RENDER, KEY_MAX_RENDER_VOLUME)),
-                        128
+                        128,
+                        config.get(List.of(
+                                KEY_RENDER, KEY_ERASER_PREVIEW_BLOCK
+                        )),
+                        config.get(List.of(
+                                KEY_RENDER, KEY_CUTOUT_PREVIEW_BLOCK
+                        ))
                 ),
                 new ProceduralSafetyConfig(
                         config.get(List.of(
@@ -171,6 +191,14 @@ public class ClientConfigConfigSerializer implements ConfigSerializer<ClientConf
         config.set(List.of(KEY_RENDER, KEY_SHOW_OTHER_PLAYERS_BUILD), settings.renderConfig().showOtherPlayersBuild());
 //        config.set(List.of(KEY_RENDER, KEY_SHOW_OTHER_PLAYERS_BUILD_TOOLTIPS), settings.renderConfig().showOtherPlayersBuildTooltips());
         config.set(List.of(KEY_RENDER, KEY_MAX_RENDER_VOLUME), settings.renderConfig().maxRenderVolume());
+        config.set(
+                List.of(KEY_RENDER, KEY_ERASER_PREVIEW_BLOCK),
+                settings.renderConfig().eraserPreviewBlockId()
+        );
+        config.set(
+                List.of(KEY_RENDER, KEY_CUTOUT_PREVIEW_BLOCK),
+                settings.renderConfig().cutoutPreviewBlockId()
+        );
         var safety = settings.proceduralSafetyConfig();
         config.set(
                 List.of(

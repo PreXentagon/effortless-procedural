@@ -11,8 +11,9 @@ import dev.huskuraft.universal.api.gui.button.Button;
 import dev.huskuraft.universal.api.gui.text.TextWidget;
 import dev.huskuraft.universal.api.platform.Entrance;
 import dev.huskuraft.universal.api.text.Text;
+import dev.huskuraft.effortless.screen.pattern.procedural.EffortlessProceduralScreen;
 
-public class EffortlessItemsScreen extends AbstractPanelScreen {
+public class EffortlessItemsScreen extends EffortlessProceduralScreen {
 
     private final Consumer<List<Item>> consumer;
     private TextWidget titleTextWidget;

@@ -4,10 +4,12 @@ import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.DoubleSupplier;
+import java.util.function.Supplier;
 
 import dev.huskuraft.universal.api.gui.button.Button;
 import dev.huskuraft.effortless.screen.settings.SettingOptionsList;
 import dev.huskuraft.universal.api.platform.Entrance;
+import dev.huskuraft.universal.api.math.Vector3d;
 import dev.huskuraft.universal.api.renderer.Renderer;
 import dev.huskuraft.universal.api.text.ChatFormatting;
 import dev.huskuraft.universal.api.text.Text;
@@ -25,6 +27,7 @@ final class ProceduralSettingOptionsList extends SettingOptionsList {
     ) {
         super(entrance, x, y, width, height, showIcon, showButton);
         setRenderSelection(false);
+        setFullWidthEntries(true);
     }
 
     ProceduralSectionEntry addSection(Text title) {
@@ -60,6 +63,50 @@ final class ProceduralSettingOptionsList extends SettingOptionsList {
         ));
         entry.setSummary(ProceduralTooltips.setting(title));
         return entry;
+    }
+
+    ProceduralTripleRangeEntry addVectorEntry(
+            Text title,
+            Supplier<Vector3d> value,
+            double minimum,
+            double maximum,
+            double step,
+            boolean logarithmic,
+            Consumer<Vector3d> consumer
+    ) {
+        return addTripleRangeEntry(
+                title,
+                Text.empty(),
+                List.of(
+                        () -> value.get().x(),
+                        () -> value.get().y(),
+                        () -> value.get().z()
+                ),
+                minimum,
+                maximum,
+                step,
+                logarithmic,
+                List.of(
+                        changed -> {
+                            var current = value.get();
+                            consumer.accept(new Vector3d(
+                                    changed, current.y(), current.z()
+                            ));
+                        },
+                        changed -> {
+                            var current = value.get();
+                            consumer.accept(new Vector3d(
+                                    current.x(), changed, current.z()
+                            ));
+                        },
+                        changed -> {
+                            var current = value.get();
+                            consumer.accept(new Vector3d(
+                                    current.x(), current.y(), changed
+                            ));
+                        }
+                )
+        );
     }
 
     public ProceduralRangeEntry addRangeEntry(

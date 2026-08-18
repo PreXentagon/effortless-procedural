@@ -220,6 +220,26 @@ class TreeBlockStateResolverTest {
                         shape.startsWith("inner_")),
                 "The curved stair band should contain an inner corner"
         );
+        assertTrue(
+                shapes.entrySet().stream()
+                        .filter(entry -> geometries.get(entry.getKey())
+                                .lateral() < 0.5)
+                        .anyMatch(entry -> !entry.getValue()
+                                .equals("straight")),
+                () -> "The left curved stair band needs a corner: " + shapes
+        );
+        assertTrue(
+                shapes.entrySet().stream()
+                        .filter(entry -> geometries.get(entry.getKey())
+                                .lateral() > 0.5)
+                        .anyMatch(entry -> !entry.getValue()
+                                .equals("straight")),
+                () -> "The right curved stair band needs a corner: "
+                        + geometries.entrySet().stream()
+                                .filter(entry -> entry.getValue().lateral()
+                                        > 0.5)
+                                .toList()
+        );
         var repeated = new LinkedHashMap<GridPosition, String>();
         geometries.forEach((position, geometry) -> repeated.put(
                 position,
