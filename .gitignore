@@ -42,3 +42,4 @@ output/
 *.tmp
 *.bak
 *.orig
+bin/
