@@ -17,9 +17,7 @@ import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralMaskL
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralNeighborCountRule;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralQuotaRule;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralSpacingRule;
-import dev.huskuraft.effortless.screen.item.EffortlessItemPickerScreen;
 import dev.huskuraft.effortless.screen.settings.SettingOptionsList;
-import dev.huskuraft.universal.api.core.BlockItem;
 import dev.huskuraft.universal.api.gui.AbstractPanelScreen;
 import dev.huskuraft.universal.api.gui.button.Button;
 import dev.huskuraft.universal.api.gui.text.TextWidget;
@@ -131,7 +129,6 @@ final class EffortlessAdvancedRuleEditScreen
         title();
         int optionsY = getTop() + PANEL_TITLE_HEIGHT_1;
         if (kind == Kind.MASK) {
-            var mask = (ProceduralMaskLayer) rule;
             addWidget(new TextWidget(
                     getEntrance(), getLeft() + PADDINGS_H, optionsY + 6,
                     Text.text("Layer name")
@@ -773,10 +770,10 @@ final class EffortlessAdvancedRuleEditScreen
                 (entry, value) -> {
                     entry.getButton().setMessage(Text.text(shortId(value)));
                     entry.getButton().setOnPressListener(button ->
-                            new EffortlessItemPickerScreen(
+                            new EffortlessCandidatePickerScreen(
                                     getEntrance(),
-                                    item -> item instanceof BlockItem,
-                                    item -> entry.setItem(item.getId().getString())
+                                    title,
+                                    entry::setItem
                             ).attach()
                     );
                 }

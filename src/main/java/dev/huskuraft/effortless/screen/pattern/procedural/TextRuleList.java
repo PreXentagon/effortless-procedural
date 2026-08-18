@@ -36,6 +36,17 @@ final class TextRuleList<T> extends ProceduralEntryList<T> {
         }
     }
 
+    void moveSelection(int direction) {
+        if (children().isEmpty() || direction == 0) {
+            return;
+        }
+        int current = indexOfSelected();
+        int next = current < 0
+                ? 0
+                : Math.clamp(current + direction, 0, children().size() - 1);
+        selectByIndex(next);
+    }
+
     void selectFirst(Predicate<T> predicate) {
         for (var entry : children()) {
             if (predicate.test(entry.getItem())) {

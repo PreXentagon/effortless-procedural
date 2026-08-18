@@ -14,7 +14,7 @@ import dev.huskuraft.universal.api.platform.Entrance;
 import dev.huskuraft.universal.api.text.Text;
 
 /**
- * Role-to-pattern workbench shared by trees, splines, and future generators.
+ * Role-to-recipe editor shared by trees, splines, and future generators.
  */
 final class EffortlessGeneratorRecipesScreen
         extends EffortlessProceduralScreen {

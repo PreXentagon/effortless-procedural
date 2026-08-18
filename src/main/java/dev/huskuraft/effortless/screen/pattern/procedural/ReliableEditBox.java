@@ -16,13 +16,13 @@ import dev.huskuraft.universal.api.text.Text;
  * value after each accepted key/character event keeps the visible text and
  * the workbench draft in sync.</p>
  */
-final class ReliableEditBox extends EditBox {
+public final class ReliableEditBox extends EditBox {
 
     private Consumer<String> changeListener = value -> {
     };
     private String reportedValue = "";
 
-    ReliableEditBox(
+    public ReliableEditBox(
             Entrance entrance,
             int x,
             int y,
@@ -94,13 +94,13 @@ final class ReliableEditBox extends EditBox {
         }
     }
 
-    void setChangeListener(Consumer<String> listener) {
+    public void setChangeListener(Consumer<String> listener) {
         changeListener = listener == null ? value -> {
         } : listener;
         reportedValue = getValue();
     }
 
-    void commitVisibleValue() {
+    public void commitVisibleValue() {
         String value = getValue();
         if (Objects.equals(value, reportedValue)) {
             return;

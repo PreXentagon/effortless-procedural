@@ -38,7 +38,8 @@ public record ProceduralAdvancedConfig(
         String noiseFieldAssetId,
         RoadProfile roadProfile,
         TreeGenerationConfig treeGeneration,
-        StructuralPlacementMode structuralPlacementMode
+        StructuralPlacementMode structuralPlacementMode,
+        List<ProceduralCompositionLayer> compositionLayers
 ) {
 
     public static final ProceduralAdvancedConfig DEFAULT =
@@ -66,7 +67,8 @@ public record ProceduralAdvancedConfig(
                     "",
                     RoadProfile.DEFAULT,
                     TreeGenerationConfig.DEFAULT,
-                    StructuralPlacementMode.RANDOM
+                    StructuralPlacementMode.RANDOM,
+                    List.of()
             );
 
     public ProceduralAdvancedConfig {
@@ -76,6 +78,7 @@ public record ProceduralAdvancedConfig(
         neighborCountRules = List.copyOf(neighborCountRules);
         quotaRules = List.copyOf(quotaRules);
         cleanupRules = List.copyOf(cleanupRules);
+        compositionLayers = List.copyOf(compositionLayers);
         parentPresetId = parentPresetId == null ? "" : parentPresetId;
         gradientField = gradientField == null
                 ? SpatialField.DEFAULT
@@ -124,7 +127,8 @@ public record ProceduralAdvancedConfig(
                 quotaRules, cleanupPasses, cleanupRules, parentPresetId,
                 inheritBlocks, inheritRules, SpatialField.DEFAULT,
                 ProceduralNoiseConfig.DEFAULT, "", "", RoadProfile.DEFAULT,
-                TreeGenerationConfig.DEFAULT, StructuralPlacementMode.RANDOM
+                TreeGenerationConfig.DEFAULT, StructuralPlacementMode.RANDOM,
+                List.of()
         );
     }
 
@@ -156,7 +160,7 @@ public record ProceduralAdvancedConfig(
                 quotaRules, cleanupPasses, cleanupRules, parentPresetId,
                 inheritBlocks, inheritRules, gradientField, noiseConfig,
                 "", "", RoadProfile.DEFAULT, TreeGenerationConfig.DEFAULT,
-                StructuralPlacementMode.RANDOM
+                StructuralPlacementMode.RANDOM, List.of()
         );
     }
 
@@ -194,7 +198,8 @@ public record ProceduralAdvancedConfig(
                 quotaRules, cleanupPasses, cleanupRules, parentPresetId,
                 inheritBlocks, inheritRules, gradientField, noiseConfig,
                 gradientFieldAssetId, noiseFieldAssetId, RoadProfile.DEFAULT,
-                TreeGenerationConfig.DEFAULT, StructuralPlacementMode.RANDOM
+                TreeGenerationConfig.DEFAULT, StructuralPlacementMode.RANDOM,
+                List.of()
         );
     }
 
@@ -233,7 +238,8 @@ public record ProceduralAdvancedConfig(
                 quotaRules, cleanupPasses, cleanupRules, parentPresetId,
                 inheritBlocks, inheritRules, gradientField, noiseConfig,
                 gradientFieldAssetId, noiseFieldAssetId, roadProfile,
-                TreeGenerationConfig.DEFAULT, StructuralPlacementMode.RANDOM
+                TreeGenerationConfig.DEFAULT, StructuralPlacementMode.RANDOM,
+                List.of()
         );
     }
 
@@ -274,7 +280,7 @@ public record ProceduralAdvancedConfig(
                 inheritBlocks, inheritRules, gradientField, noiseConfig,
                 gradientFieldAssetId, noiseFieldAssetId, roadProfile,
                 TreeGenerationConfig.legacySkeleton(treeProfile),
-                StructuralPlacementMode.RANDOM
+                StructuralPlacementMode.RANDOM, List.of()
         );
     }
 
@@ -311,7 +317,8 @@ public record ProceduralAdvancedConfig(
                 neighborCountRules, quotaRules, cleanupPasses, cleanupRules,
                 parentPresetId, inheritBlocks, inheritRules, gradientField,
                 noiseConfig, gradientFieldAssetId, noiseFieldAssetId,
-                roadProfile, treeGeneration, StructuralPlacementMode.RANDOM
+                roadProfile, treeGeneration, StructuralPlacementMode.RANDOM,
+                List.of()
         );
     }
 
@@ -342,7 +349,8 @@ public record ProceduralAdvancedConfig(
                 noiseFieldAssetId,
                 roadProfile,
                 treeGeneration,
-                structuralPlacementMode
+                structuralPlacementMode,
+                concat(parent.compositionLayers, compositionLayers)
         );
     }
 
@@ -371,7 +379,8 @@ public record ProceduralAdvancedConfig(
                 noiseFieldAssetId,
                 roadProfile,
                 treeGeneration,
-                structuralPlacementMode
+                structuralPlacementMode,
+                compositionLayers
         );
     }
 
@@ -440,7 +449,8 @@ public record ProceduralAdvancedConfig(
                 noiseFieldAssetId,
                 roadProfile,
                 treeGeneration,
-                structuralPlacementMode
+                structuralPlacementMode,
+                compositionLayers
         );
     }
 
@@ -452,7 +462,7 @@ public record ProceduralAdvancedConfig(
                 quotaRules, cleanupPasses, cleanupRules, parentPresetId,
                 inheritBlocks, inheritRules, value, noiseConfig,
                 gradientFieldAssetId, noiseFieldAssetId, roadProfile,
-                treeGeneration, structuralPlacementMode
+                treeGeneration, structuralPlacementMode, compositionLayers
         );
     }
 
@@ -466,7 +476,7 @@ public record ProceduralAdvancedConfig(
                 quotaRules, cleanupPasses, cleanupRules, parentPresetId,
                 inheritBlocks, inheritRules, gradientField, value,
                 gradientFieldAssetId, noiseFieldAssetId, roadProfile,
-                treeGeneration, structuralPlacementMode
+                treeGeneration, structuralPlacementMode, compositionLayers
         );
     }
 
@@ -478,7 +488,7 @@ public record ProceduralAdvancedConfig(
                 quotaRules, cleanupPasses, cleanupRules, parentPresetId,
                 inheritBlocks, inheritRules, gradientField, noiseConfig,
                 id, noiseFieldAssetId, roadProfile, treeGeneration,
-                structuralPlacementMode
+                structuralPlacementMode, compositionLayers
         );
     }
 
@@ -490,7 +500,7 @@ public record ProceduralAdvancedConfig(
                 quotaRules, cleanupPasses, cleanupRules, parentPresetId,
                 inheritBlocks, inheritRules, gradientField, noiseConfig,
                 gradientFieldAssetId, id, roadProfile, treeGeneration,
-                structuralPlacementMode
+                structuralPlacementMode, compositionLayers
         );
     }
 
@@ -502,7 +512,7 @@ public record ProceduralAdvancedConfig(
                 quotaRules, cleanupPasses, cleanupRules, parentPresetId,
                 inheritBlocks, inheritRules, gradientField, noiseConfig,
                 gradientFieldAssetId, noiseFieldAssetId, value,
-                treeGeneration, structuralPlacementMode
+                treeGeneration, structuralPlacementMode, compositionLayers
         );
     }
 
@@ -524,7 +534,7 @@ public record ProceduralAdvancedConfig(
                 quotaRules, cleanupPasses, cleanupRules, parentPresetId,
                 inheritBlocks, inheritRules, gradientField, noiseConfig,
                 gradientFieldAssetId, noiseFieldAssetId, roadProfile, value,
-                structuralPlacementMode
+                structuralPlacementMode, compositionLayers
         );
     }
 
@@ -538,7 +548,21 @@ public record ProceduralAdvancedConfig(
                 neighborCountRules, quotaRules, cleanupPasses, cleanupRules,
                 parentPresetId, inheritBlocks, inheritRules, gradientField,
                 noiseConfig, gradientFieldAssetId, noiseFieldAssetId,
-                roadProfile, treeGeneration, value
+                roadProfile, treeGeneration, value, compositionLayers
+        );
+    }
+
+    public ProceduralAdvancedConfig withCompositionLayers(
+            List<ProceduralCompositionLayer> value
+    ) {
+        return new ProceduralAdvancedConfig(
+                repairPasses, adjacencyTopology, coordinateSpace, seedMode,
+                gradientDistributionMode, gradientCurve, gradientSteps,
+                maskLayers, directionalRules, spacingRules,
+                neighborCountRules, quotaRules, cleanupPasses, cleanupRules,
+                parentPresetId, inheritBlocks, inheritRules, gradientField,
+                noiseConfig, gradientFieldAssetId, noiseFieldAssetId,
+                roadProfile, treeGeneration, structuralPlacementMode, value
         );
     }
 
@@ -660,7 +684,7 @@ public record ProceduralAdvancedConfig(
                 cleanupRules, parentPresetId, inheritBlocks, inheritRules,
                 gradientField, noiseConfig, gradientFieldAssetId,
                 noiseFieldAssetId, roadProfile, treeGeneration,
-                structuralPlacementMode
+                structuralPlacementMode, compositionLayers
         );
     }
 

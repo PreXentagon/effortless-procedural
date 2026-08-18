@@ -18,7 +18,7 @@ import dev.huskuraft.effortless.screen.common.EffortlessScreen;
  * demo panel renderer. They are modal workbench subviews over the same
  * in-memory draft; only the root workbench persists that draft.</p>
  */
-abstract class EffortlessProceduralScreen extends EffortlessScreen {
+public abstract class EffortlessProceduralScreen extends EffortlessScreen {
 
     protected static final int PANEL_WIDTH_60 =
             AbstractPanelScreen.PANEL_WIDTH_60;

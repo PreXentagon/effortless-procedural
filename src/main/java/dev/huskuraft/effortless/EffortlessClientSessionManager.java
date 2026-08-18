@@ -134,6 +134,13 @@ public final class EffortlessClientSessionManager implements SessionManager {
     }
 
     public void notifyPlayer() {
+        // A saved build context can request a permission check on the first
+        // render tick, just before the regular client-tick initializer runs.
+        // Populate the local descriptor here as well so that this harmless
+        // ordering race is not reported as a missing client mod.
+        if (clientSession.get() == null) {
+            clientSession.compareAndSet(null, getLastSession());
+        }
         var id = Text.text("[").append(Text.translate("effortless.name")).append(Text.text("] ")).withStyle(ChatFormatting.GRAY);
         var message = switch (getSessionStatus()) {
             case MOD_MISSING -> Text.translate("effortless.session_status.message.mod_missing");

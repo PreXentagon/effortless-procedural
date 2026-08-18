@@ -102,4 +102,142 @@ public record ConstraintConfig(
             null,
             null
     );
+
+    public ConstraintConfig withAllowUseMod(boolean value) {
+        return copy(value, allowBreakBlocks, allowPlaceBlocks,
+                allowInteractBlocks, allowCopyPasteStructures,
+                useProperToolsOnly, maxReachDistance, maxBlockBreakVolume,
+                maxBlockPlaceVolume, maxBlockInteractVolume,
+                maxStructureCopyPasteVolume, whitelistedItems,
+                blacklistedItems);
+    }
+
+    public ConstraintConfig withAllowBreakBlocks(boolean value) {
+        return copy(allowUseMod, value, allowPlaceBlocks,
+                allowInteractBlocks, allowCopyPasteStructures,
+                useProperToolsOnly, maxReachDistance, maxBlockBreakVolume,
+                maxBlockPlaceVolume, maxBlockInteractVolume,
+                maxStructureCopyPasteVolume, whitelistedItems,
+                blacklistedItems);
+    }
+
+    public ConstraintConfig withAllowPlaceBlocks(boolean value) {
+        return copy(allowUseMod, allowBreakBlocks, value,
+                allowInteractBlocks, allowCopyPasteStructures,
+                useProperToolsOnly, maxReachDistance, maxBlockBreakVolume,
+                maxBlockPlaceVolume, maxBlockInteractVolume,
+                maxStructureCopyPasteVolume, whitelistedItems,
+                blacklistedItems);
+    }
+
+    public ConstraintConfig withAllowInteractBlocks(boolean value) {
+        return copy(allowUseMod, allowBreakBlocks, allowPlaceBlocks, value,
+                allowCopyPasteStructures, useProperToolsOnly,
+                maxReachDistance, maxBlockBreakVolume, maxBlockPlaceVolume,
+                maxBlockInteractVolume, maxStructureCopyPasteVolume,
+                whitelistedItems, blacklistedItems);
+    }
+
+    public ConstraintConfig withAllowCopyPasteStructures(boolean value) {
+        return copy(allowUseMod, allowBreakBlocks, allowPlaceBlocks,
+                allowInteractBlocks, value, useProperToolsOnly,
+                maxReachDistance, maxBlockBreakVolume, maxBlockPlaceVolume,
+                maxBlockInteractVolume, maxStructureCopyPasteVolume,
+                whitelistedItems, blacklistedItems);
+    }
+
+    public ConstraintConfig withUseProperToolsOnly(boolean value) {
+        return copy(allowUseMod, allowBreakBlocks, allowPlaceBlocks,
+                allowInteractBlocks, allowCopyPasteStructures, value,
+                maxReachDistance, maxBlockBreakVolume, maxBlockPlaceVolume,
+                maxBlockInteractVolume, maxStructureCopyPasteVolume,
+                whitelistedItems, blacklistedItems);
+    }
+
+    public ConstraintConfig withMaxReachDistance(int value) {
+        return copy(allowUseMod, allowBreakBlocks, allowPlaceBlocks,
+                allowInteractBlocks, allowCopyPasteStructures,
+                useProperToolsOnly, value, maxBlockBreakVolume,
+                maxBlockPlaceVolume, maxBlockInteractVolume,
+                maxStructureCopyPasteVolume, whitelistedItems,
+                blacklistedItems);
+    }
+
+    public ConstraintConfig withMaxBlockBreakVolume(int value) {
+        return copy(allowUseMod, allowBreakBlocks, allowPlaceBlocks,
+                allowInteractBlocks, allowCopyPasteStructures,
+                useProperToolsOnly, maxReachDistance, value,
+                maxBlockPlaceVolume, maxBlockInteractVolume,
+                maxStructureCopyPasteVolume, whitelistedItems,
+                blacklistedItems);
+    }
+
+    public ConstraintConfig withMaxBlockPlaceVolume(int value) {
+        return copy(allowUseMod, allowBreakBlocks, allowPlaceBlocks,
+                allowInteractBlocks, allowCopyPasteStructures,
+                useProperToolsOnly, maxReachDistance, maxBlockBreakVolume,
+                value, maxBlockInteractVolume, maxStructureCopyPasteVolume,
+                whitelistedItems, blacklistedItems);
+    }
+
+    public ConstraintConfig withMaxBlockInteractVolume(int value) {
+        return copy(allowUseMod, allowBreakBlocks, allowPlaceBlocks,
+                allowInteractBlocks, allowCopyPasteStructures,
+                useProperToolsOnly, maxReachDistance, maxBlockBreakVolume,
+                maxBlockPlaceVolume, value, maxStructureCopyPasteVolume,
+                whitelistedItems, blacklistedItems);
+    }
+
+    public ConstraintConfig withMaxStructureCopyPasteVolume(int value) {
+        return copy(allowUseMod, allowBreakBlocks, allowPlaceBlocks,
+                allowInteractBlocks, allowCopyPasteStructures,
+                useProperToolsOnly, maxReachDistance, maxBlockBreakVolume,
+                maxBlockPlaceVolume, maxBlockInteractVolume, value,
+                whitelistedItems, blacklistedItems);
+    }
+
+    public ConstraintConfig withWhitelistedItems(
+            List<ResourceLocation> value
+    ) {
+        return copy(allowUseMod, allowBreakBlocks, allowPlaceBlocks,
+                allowInteractBlocks, allowCopyPasteStructures,
+                useProperToolsOnly, maxReachDistance, maxBlockBreakVolume,
+                maxBlockPlaceVolume, maxBlockInteractVolume,
+                maxStructureCopyPasteVolume, value, blacklistedItems);
+    }
+
+    public ConstraintConfig withBlacklistedItems(
+            List<ResourceLocation> value
+    ) {
+        return copy(allowUseMod, allowBreakBlocks, allowPlaceBlocks,
+                allowInteractBlocks, allowCopyPasteStructures,
+                useProperToolsOnly, maxReachDistance, maxBlockBreakVolume,
+                maxBlockPlaceVolume, maxBlockInteractVolume,
+                maxStructureCopyPasteVolume, whitelistedItems, value);
+    }
+
+    private ConstraintConfig copy(
+            Boolean allowUseMod,
+            Boolean allowBreakBlocks,
+            Boolean allowPlaceBlocks,
+            Boolean allowInteractBlocks,
+            Boolean allowCopyPasteStructures,
+            Boolean useProperToolsOnly,
+            Integer maxReachDistance,
+            Integer maxBlockBreakVolume,
+            Integer maxBlockPlaceVolume,
+            Integer maxBlockInteractVolume,
+            Integer maxStructureCopyPasteVolume,
+            List<ResourceLocation> whitelistedItems,
+            List<ResourceLocation> blacklistedItems
+    ) {
+        return new ConstraintConfig(
+                useCommands, allowUseMod, allowBreakBlocks, allowPlaceBlocks,
+                allowInteractBlocks, allowCopyPasteStructures,
+                useProperToolsOnly, maxReachDistance, maxBlockBreakVolume,
+                maxBlockPlaceVolume, maxBlockInteractVolume,
+                maxStructureCopyPasteVolume, whitelistedItems,
+                blacklistedItems
+        );
+    }
 }

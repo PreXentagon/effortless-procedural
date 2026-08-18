@@ -25,6 +25,42 @@ final class ProceduralTheme {
     private ProceduralTheme() {
     }
 
+    static void renderWorkbenchBackdrop(
+            Renderer renderer,
+            int width,
+            int height
+    ) {
+        renderer.renderGradientRect(
+                0, 0, width, height, 0x68080A0D, 0x88080A0D
+        );
+    }
+
+    static void renderWorkbenchFrame(
+            Renderer renderer,
+            Typeface typeface,
+            Text title,
+            WorkbenchScreenLayout layout
+    ) {
+        renderer.renderRect(
+                layout.left(), layout.headerTop(),
+                layout.right(), layout.headerBottom(),
+                0xC816191D);
+        renderer.renderRect(
+                layout.left(), layout.tabsTop(),
+                layout.right(), layout.bodyBottom(),
+                0xB80C0F12);
+        renderer.renderRect(
+                layout.left(), layout.footerTop(),
+                layout.right(), layout.footerBottom(),
+                0xC816191D);
+        renderer.renderTextFromStart(typeface, Text.text("EFFORTLESS"),
+                layout.left() + 10, layout.headerTop() + 9,
+                0xFFE2B55B, true);
+        renderer.renderTextFromCenter(typeface, title,
+                layout.centerX(), layout.headerTop() + 9,
+                0xFFE4E7E9, true);
+    }
+
     static void renderButton(
             Renderer renderer,
             Typeface typeface,
@@ -74,7 +110,7 @@ final class ProceduralTheme {
             );
             return;
         }
-        if (button.getWidth() < 32) {
+        if (button.getWidth() < 24) {
             return;
         }
 

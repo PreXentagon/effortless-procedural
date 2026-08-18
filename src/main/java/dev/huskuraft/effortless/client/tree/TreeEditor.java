@@ -1,5 +1,14 @@
 package dev.huskuraft.effortless.client.tree;
 
+import static dev.huskuraft.effortless.client.editor.EditorGeometry.matches;
+import static dev.huskuraft.effortless.client.editor.EditorGeometry.distanceToPath;
+import static dev.huskuraft.effortless.client.editor.EditorGeometry.axisFromView;
+import static dev.huskuraft.effortless.client.editor.EditorGeometry.pathFromView;
+import static dev.huskuraft.effortless.client.editor.EditorGeometry.playerPosition;
+import static dev.huskuraft.effortless.client.editor.EditorGeometry.pointBox;
+import static dev.huskuraft.effortless.client.editor.EditorGeometry.targetPoint;
+import static dev.huskuraft.effortless.client.editor.EditorGeometry.vector;
+
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -16,10 +25,13 @@ import dev.huskuraft.effortless.EffortlessClient;
 import dev.huskuraft.effortless.building.BuildResult;
 import dev.huskuraft.effortless.building.clipboard.Snapshot;
 import dev.huskuraft.effortless.building.config.ProceduralSafetyConfig;
+import dev.huskuraft.effortless.client.editor.ControlPointDraft;
+import dev.huskuraft.effortless.client.editor.ControlAxis;
+import dev.huskuraft.effortless.client.editor.EditorGeometry.Segment;
 import dev.huskuraft.effortless.client.pattern.procedural.ProceduralContextCompiler;
+import dev.huskuraft.effortless.client.pattern.procedural.ProceduralPreviewMarkers;
 import dev.huskuraft.effortless.client.pattern.procedural.config.PatternMaterialSource;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralPatternPreset;
-import dev.huskuraft.effortless.client.road.RoadInteractionMath;
 import dev.huskuraft.effortless.client.road.RoadPatternCompiler;
 import dev.huskuraft.effortless.client.road.RoadPoint;
 import dev.huskuraft.effortless.renderer.opertaion.BlockRenderLayers;
@@ -35,8 +47,6 @@ import dev.huskuraft.universal.api.core.Tuple2;
 import dev.huskuraft.universal.api.core.World;
 import dev.huskuraft.universal.api.events.EventResult;
 import dev.huskuraft.universal.api.input.Keys;
-import dev.huskuraft.universal.api.math.BoundingBox3d;
-import dev.huskuraft.universal.api.math.Vector3d;
 import dev.huskuraft.universal.api.renderer.Renderer;
 import dev.huskuraft.universal.api.text.ChatFormatting;
 import dev.huskuraft.universal.api.text.Text;
@@ -63,7 +73,7 @@ public final class TreeEditor {
     private final Set<Object> visibleOutlineIds = new HashSet<>();
     private final ExecutorService materialPreviewExecutor;
 
-    private TreeDraft draft = TreeDraft.EMPTY;
+    private ControlPointDraft draft = ControlPointDraft.EMPTY;
     private TreeGenerationConfig generation = TreeGenerationConfig.DEFAULT;
     private TreeProfile profile = TreeProfile.DEFAULT;
     private int visibleVariant;
@@ -83,7 +93,7 @@ public final class TreeEditor {
     private boolean materialPreviewDirty = true;
     private boolean active;
     private boolean moveArmed;
-    private AxisMove axisMove = AxisMove.NONE;
+    private ControlAxis axisMove = ControlAxis.NONE;
     private ResourceKey<World> draftDimension;
     private int tooltipRefresh;
 
@@ -100,7 +110,7 @@ public final class TreeEditor {
         return active;
     }
 
-    public TreeDraft draft() {
+    public ControlPointDraft draft() {
         return draft;
     }
 
@@ -140,7 +150,7 @@ public final class TreeEditor {
         visibleVariant = generation.variant();
         invalidatePreview();
         moveArmed = false;
-        axisMove = AxisMove.NONE;
+        axisMove = ControlAxis.NONE;
         active = true;
         message(
                 draft.points().isEmpty()
@@ -184,7 +194,7 @@ public final class TreeEditor {
         }
         active = false;
         moveArmed = false;
-        axisMove = AxisMove.NONE;
+        axisMove = ControlAxis.NONE;
         message("Tree editor deselected; draft retained", ChatFormatting.GRAY);
     }
 
@@ -219,7 +229,7 @@ public final class TreeEditor {
         }
         if (type == InteractionType.USE_ITEM && !shift && !control) {
             var viewAxis = gizmoFromView();
-            if (viewAxis != AxisMove.NONE) {
+            if (viewAxis != ControlAxis.NONE) {
                 selectAxis(viewAxis);
                 entrance.getClient().getPlayer().swing(hand);
                 return EventResult.interruptTrue();
@@ -288,7 +298,8 @@ public final class TreeEditor {
         if (!renderConfig.showBlockPreview()
                 || materialPreview.positionCount()
                         > renderConfig.maxRenderVolume()
-                || distanceToTree(playerPosition())
+                || distanceToTree(playerPosition(
+                        entrance.getClient().getPlayer()))
                         > entrance.getConfigStorage().get()
                                 .proceduralSafetyConfig()
                                 .roadPreviewDistance()) {
@@ -300,9 +311,12 @@ public final class TreeEditor {
         var world = player.getWorld();
         float scale = 129f / 128f;
         for (var data : snapshot.blockData()) {
-            if (data.blockState() == null || data.blockState().isAir()) {
+            if (data.blockState() == null) {
                 continue;
             }
+            var previewState = data.blockState().isAir()
+                    ? ProceduralPreviewMarkers.eraser(renderConfig)
+                    : data.blockState();
             var position = anchor.add(data.blockPosition());
             renderer.pushPose();
             renderer.translate(position.toVector3d().sub(camera));
@@ -316,7 +330,7 @@ public final class TreeEditor {
                     BlockRenderLayers.block(PREVIEW_COLOR),
                     world,
                     position,
-                    data.blockState()
+                    previewState
             );
             renderer.popPose();
         }
@@ -338,7 +352,7 @@ public final class TreeEditor {
             );
             return;
         }
-        if (axisMove != AxisMove.NONE && draft.selectedIndex() >= 0) {
+        if (axisMove != ControlAxis.NONE && draft.selectedIndex() >= 0) {
             var selected = draft.points().get(draft.selectedIndex());
             draft = draft.moveSelected(switch (axisMove) {
                 case X -> selected.withX(target.x());
@@ -346,7 +360,7 @@ public final class TreeEditor {
                 case Z -> selected.withZ(target.z());
                 case NONE -> selected;
             });
-            axisMove = AxisMove.NONE;
+            axisMove = ControlAxis.NONE;
             moveArmed = false;
             invalidatePreview();
             message("Tree point moved on one axis", ChatFormatting.GREEN);
@@ -388,15 +402,15 @@ public final class TreeEditor {
     }
 
     private void onAttack() {
-        if (axisMove != AxisMove.NONE || moveArmed) {
-            axisMove = AxisMove.NONE;
+        if (axisMove != ControlAxis.NONE || moveArmed) {
+            axisMove = ControlAxis.NONE;
             moveArmed = false;
             message("Point move canceled", ChatFormatting.GRAY);
             return;
         }
         if (draft.selectedIndex() >= 2) {
             int branch = draft.selectedIndex() - 1;
-            draft = draft.deleteSelected();
+            draft = draft.deleteSelected(2, 2);
             invalidatePreview();
             message("Deleted branch " + branch, ChatFormatting.GRAY);
             return;
@@ -420,8 +434,8 @@ public final class TreeEditor {
             );
             return;
         }
-        var resolution = entrance.getProceduralConfigStorage().get()
-                .resolvedActivePreset();
+        var library = entrance.getProceduralConfigStorage().get();
+        var resolution = library.resolvedActivePreset();
         if (!resolution.isSuccess()) {
             message(
                     "Tree pattern: " + String.join("; ", resolution.errors()),
@@ -431,7 +445,7 @@ public final class TreeEditor {
         }
         var player = entrance.getClient().getPlayer();
         var materialResolution = TreeMaterialResolver.resolve(
-                entrance.getProceduralConfigStorage().get(),
+                library,
                 resolution.preset().orElseThrow()
         );
         if (!materialResolution.isSuccess()) {
@@ -445,6 +459,7 @@ public final class TreeEditor {
         var compilation = TreePatternCompiler.compile(
                 player,
                 entrance.getStructureBuilder().getContext(player),
+                library,
                 resolution.preset().orElseThrow(),
                 materialResolution.recipes(),
                 preview,
@@ -588,8 +603,8 @@ public final class TreeEditor {
         if (draft.points().size() < 2) {
             return;
         }
-        var resolution = entrance.getProceduralConfigStorage().get()
-                .resolvedActivePreset();
+        var library = entrance.getProceduralConfigStorage().get();
+        var resolution = library.resolvedActivePreset();
         if (!resolution.isSuccess()) {
             preview = TreeVoxelizer.Result.failure(resolution.errors());
             return;
@@ -608,8 +623,8 @@ public final class TreeEditor {
         if (!preview.isSuccess()) {
             return;
         }
-        var resolution = entrance.getProceduralConfigStorage().get()
-                .resolvedActivePreset();
+        var library = entrance.getProceduralConfigStorage().get();
+        var resolution = library.resolvedActivePreset();
         if (!resolution.isSuccess()) {
             materialPreview = RoadPatternCompiler.CompilationResult.failure(
                     "The active tree pattern is invalid",
@@ -621,7 +636,7 @@ public final class TreeEditor {
         }
         var preset = resolution.preset().orElseThrow();
         var roleResolution = TreeMaterialResolver.resolve(
-                entrance.getProceduralConfigStorage().get(),
+                library,
                 preset
         );
         if (!roleResolution.isSuccess()) {
@@ -707,6 +722,19 @@ public final class TreeEditor {
                             preset
                     ).withMaterialSource(PatternMaterialSource.CUSTOM_PALETTE)
             );
+            var workerLibrary = new dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralPatternLibrary(
+                    library.enabled(),
+                    library.activePresetId(),
+                    library.presets().stream()
+                            .map(candidate -> ProceduralContextCompiler
+                                    .resolvePreviewMaterials(
+                                            player, candidate
+                                    ).withMaterialSource(
+                                            PatternMaterialSource.CUSTOM_PALETTE
+                                    ))
+                            .toList(),
+                    library.fieldAssets()
+            );
             var context = entrance.getStructureBuilder().getContext(player);
             var tree = preview;
             materialPreview = RoadPatternCompiler.CompilationResult.failure(
@@ -721,6 +749,7 @@ public final class TreeEditor {
                     TreePatternCompiler.compilePreview(
                             player,
                             context,
+                            workerLibrary,
                             workerPreset,
                             workerRecipes,
                             tree,
@@ -739,6 +768,7 @@ public final class TreeEditor {
         materialPreview = TreePatternCompiler.compilePreview(
                 player,
                 entrance.getStructureBuilder().getContext(player),
+                library,
                 preset,
                 recipes,
                 preview,
@@ -793,7 +823,8 @@ public final class TreeEditor {
                 new Tuple2<>(
                         Text.text("Preview").withStyle(ChatFormatting.WHITE),
                         Text.text(
-                                distanceToTree(playerPosition())
+                                distanceToTree(playerPosition(
+                                        entrance.getClient().getPlayer()))
                                         <= safety().roadPreviewDistance()
                                         ? "Visible"
                                         : "Distance hidden"
@@ -894,63 +925,33 @@ public final class TreeEditor {
     private void renderGizmo(Set<Object> next) {
         var outline = entrance.getClientManager().getOutlineRenderer();
         var center = draft.points().get(draft.selectedIndex());
-        for (var axis : new AxisMove[]{AxisMove.X, AxisMove.Y, AxisMove.Z}) {
-            var end = gizmoEnd(center, axis);
+        for (var axis : ControlAxis.spatial()) {
+            var end = axis.offset(center, GIZMO_LENGTH);
             Object lineId = "effortless:tree/gizmo/" + axis + "/line";
             Object handleId = "effortless:tree/gizmo/" + axis + "/handle";
             next.add(lineId);
             next.add(handleId);
-            int[] rgb = axisRgb(axis);
             outline.showLine(lineId, vector(center), vector(end))
-                    .colored(rgb[0], rgb[1], rgb[2], 150)
+                    .colored(axis.red(), axis.green(), axis.blue(), 150)
                     .stroke(0.065f);
             outline.showBoundingBox(handleId, pointBox(end))
-                    .colored(rgb[0], rgb[1], rgb[2], 135)
+                    .colored(axis.red(), axis.green(), axis.blue(), 135)
                     .stroke(0.055f);
         }
     }
 
-    private AxisMove gizmoFromView() {
+    private ControlAxis gizmoFromView() {
         if (draft.selectedIndex() < 0) {
-            return AxisMove.NONE;
+            return ControlAxis.NONE;
         }
-        var player = entrance.getClient().getPlayer();
-        var eyeVector = player.getEyePosition();
-        var directionVector = player.getEyeDirection();
-        var eye = new RoadPoint(
-                eyeVector.x(), eyeVector.y(), eyeVector.z()
+        return axisFromView(
+                entrance.getClient().getPlayer(),
+                draft.points().get(draft.selectedIndex()),
+                GIZMO_LENGTH,
+                GIZMO_RAY_REACH,
+                GIZMO_RAY_START_OFFSET,
+                GIZMO_RAY_PICK_RADIUS
         );
-        var viewEnd = eye.add(new RoadPoint(
-                directionVector.x(),
-                directionVector.y(),
-                directionVector.z()
-        ).normalize().mul(GIZMO_RAY_REACH));
-        var center = draft.points().get(draft.selectedIndex());
-        AxisMove best = AxisMove.NONE;
-        double bestDistance = GIZMO_RAY_PICK_RADIUS
-                * GIZMO_RAY_PICK_RADIUS;
-        for (var axis : new AxisMove[]{
-                AxisMove.X, AxisMove.Y, AxisMove.Z
-        }) {
-            var end = gizmoEnd(center, axis);
-            if (eye.distance(end) > GIZMO_RAY_REACH) {
-                continue;
-            }
-            var start = switch (axis) {
-                case X -> center.add(GIZMO_RAY_START_OFFSET, 0.0, 0.0);
-                case Y -> center.add(0.0, GIZMO_RAY_START_OFFSET, 0.0);
-                case Z -> center.add(0.0, 0.0, GIZMO_RAY_START_OFFSET);
-                case NONE -> center;
-            };
-            double distance = RoadInteractionMath.segmentDistanceSquared(
-                    eye, viewEnd, start, end
-            );
-            if (distance <= bestDistance) {
-                best = axis;
-                bestDistance = distance;
-            }
-        }
-        return best;
     }
 
     private boolean treeFromView() {
@@ -958,26 +959,11 @@ public final class TreeEditor {
         if (!preview.isSuccess()) {
             return false;
         }
-        var player = entrance.getClient().getPlayer();
-        var eyeVector = player.getEyePosition();
-        var directionVector = player.getEyeDirection();
-        var eye = new RoadPoint(
-                eyeVector.x(), eyeVector.y(), eyeVector.z()
-        );
-        var viewEnd = eye.add(new RoadPoint(
-                directionVector.x(),
-                directionVector.y(),
-                directionVector.z()
-        ).normalize().mul(TREE_RAY_REACH));
-        double maximumDistance = TREE_RAY_PICK_RADIUS
-                * TREE_RAY_PICK_RADIUS;
-        return preview.limbs().stream().anyMatch(limb ->
-                RoadInteractionMath.segmentDistanceSquared(
-                        eye,
-                        viewEnd,
-                        limb.start(),
-                        limb.end()
-                ) <= maximumDistance
+        return pathFromView(
+                entrance.getClient().getPlayer(),
+                previewSegments(),
+                TREE_RAY_REACH,
+                TREE_RAY_PICK_RADIUS
         );
     }
 
@@ -1002,21 +988,13 @@ public final class TreeEditor {
         if (!preview.isSuccess()) {
             return Double.POSITIVE_INFINITY;
         }
-        double minimum = Double.POSITIVE_INFINITY;
-        for (var limb : preview.limbs()) {
-            minimum = Math.min(
-                    minimum,
-                    RoadInteractionMath.segmentDistanceSquared(
-                            point, point, limb.start(), limb.end()
-                    )
-            );
-        }
-        return Math.sqrt(minimum);
+        return distanceToPath(point, previewSegments());
     }
 
-    private RoadPoint playerPosition() {
-        var position = entrance.getClient().getPlayer().getPosition();
-        return new RoadPoint(position.x(), position.y(), position.z());
+    private java.util.List<Segment> previewSegments() {
+        return preview.limbs().stream()
+                .map(limb -> new Segment(limb.start(), limb.end()))
+                .toList();
     }
 
     private void clearTree() {
@@ -1027,7 +1005,7 @@ public final class TreeEditor {
 
     private void clearDraftState() {
         cancelMaterialPreview();
-        draft = TreeDraft.EMPTY;
+        draft = ControlPointDraft.EMPTY;
         preview = TreeVoxelizer.Result.failure(java.util.List.of("No tree"));
         materialPreview = RoadPatternCompiler.CompilationResult.failure(
                 "No tree",
@@ -1038,17 +1016,17 @@ public final class TreeEditor {
         materialPreviewSafety = null;
         materialPreviewDirty = true;
         moveArmed = false;
-        axisMove = AxisMove.NONE;
+        axisMove = ControlAxis.NONE;
         hideTooltip();
     }
 
-    private void selectAxis(AxisMove selectedAxis) {
+    private void selectAxis(ControlAxis selectedAxis) {
         axisMove = selectedAxis;
         moveArmed = false;
         message(
                 "Axis " + selectedAxis.name()
                         + " selected; click the new coordinate",
-                axisColor(selectedAxis)
+                selectedAxis.textColor()
         );
     }
 
@@ -1062,63 +1040,6 @@ public final class TreeEditor {
             case 1 -> "tree crown";
             default -> "branch " + (index - 1);
         };
-    }
-
-    private static RoadPoint gizmoEnd(RoadPoint center, AxisMove axis) {
-        return switch (axis) {
-            case X -> center.add(GIZMO_LENGTH, 0.0, 0.0);
-            case Y -> center.add(0.0, GIZMO_LENGTH, 0.0);
-            case Z -> center.add(0.0, 0.0, GIZMO_LENGTH);
-            case NONE -> center;
-        };
-    }
-
-    private static int[] axisRgb(AxisMove axis) {
-        return switch (axis) {
-            case X -> new int[]{205, 92, 92};
-            case Y -> new int[]{92, 184, 112};
-            case Z -> new int[]{92, 132, 205};
-            case NONE -> new int[]{180, 180, 180};
-        };
-    }
-
-    private static ChatFormatting axisColor(AxisMove axis) {
-        return switch (axis) {
-            case X -> ChatFormatting.RED;
-            case Y -> ChatFormatting.GREEN;
-            case Z -> ChatFormatting.BLUE;
-            case NONE -> ChatFormatting.GRAY;
-        };
-    }
-
-    private static RoadPoint targetPoint(BlockInteraction interaction) {
-        BlockPosition position = interaction.getBlockPosition()
-                .relative(interaction.getDirection());
-        var center = position.getCenter();
-        return new RoadPoint(center.x(), center.y(), center.z());
-    }
-
-    private static BoundingBox3d pointBox(RoadPoint point) {
-        var position = new BlockPosition(
-                (int) Math.floor(point.x()),
-                (int) Math.floor(point.y()),
-                (int) Math.floor(point.z())
-        );
-        return BoundingBox3d.fromLowerCornersOf(position.toVector3i());
-    }
-
-    private static Vector3d vector(RoadPoint point) {
-        return new Vector3d(point.x(), point.y(), point.z());
-    }
-
-    private static boolean matches(
-            dev.huskuraft.effortless.client.pattern.procedural.GridPosition
-                    first,
-            BlockPosition second
-    ) {
-        return first.x() == second.x()
-                && first.y() == second.y()
-                && first.z() == second.z();
     }
 
     private void clearOutlines() {
@@ -1139,10 +1060,4 @@ public final class TreeEditor {
         }
     }
 
-    private enum AxisMove {
-        NONE,
-        X,
-        Y,
-        Z
-    }
 }

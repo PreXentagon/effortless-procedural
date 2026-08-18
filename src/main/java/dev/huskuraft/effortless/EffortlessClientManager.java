@@ -24,6 +24,7 @@ import dev.huskuraft.universal.api.text.ChatFormatting;
 import dev.huskuraft.universal.api.text.Text;
 import dev.huskuraft.effortless.building.clipboard.SnapshotTransform;
 import dev.huskuraft.effortless.building.pattern.Pattern;
+import dev.huskuraft.effortless.building.structure.BuildMode;
 import dev.huskuraft.effortless.client.pattern.procedural.config.ProceduralPatternLibrary;
 import dev.huskuraft.effortless.client.road.RoadEditor;
 import dev.huskuraft.effortless.client.road.SplineSubtype;
@@ -34,10 +35,9 @@ import dev.huskuraft.effortless.renderer.opertaion.OperationsRenderer;
 import dev.huskuraft.effortless.renderer.outliner.OutlineRenderer;
 import dev.huskuraft.effortless.renderer.pattern.PatternRenderer;
 import dev.huskuraft.effortless.renderer.tooltip.TooltipRenderer;
-import dev.huskuraft.effortless.screen.clipboard.EffortlessClipboardScreen;
 import dev.huskuraft.effortless.screen.pattern.procedural.EffortlessProceduralPatternScreen;
+import dev.huskuraft.effortless.screen.pattern.procedural.EffortlessWorkbenchClipboardScreen;
 import dev.huskuraft.effortless.screen.settings.EffortlessSettingsScreen;
-import dev.huskuraft.effortless.screen.structure.EffortlessStructureScreen;
 import dev.huskuraft.effortless.screen.test.EffortlessTestScreen;
 
 public final class EffortlessClientManager implements ClientManager {
@@ -209,10 +209,10 @@ public final class EffortlessClientManager implements ClientManager {
             getEntrance().getStructureBuilder().resetInteractions(getRunningClient().getPlayer());
         }
 
-        if (EffortlessKeys.BUILD_MODE_RADIAL.getKeyBinding().isDown()) {
-            if (!(getRunningClient().getPanel() instanceof EffortlessStructureScreen)) {
-                new EffortlessStructureScreen(getEntrance(), EffortlessKeys.BUILD_MODE_RADIAL.getKeyBinding()).attach();
-            }
+        if (EffortlessKeys.BUILD_MODE_RADIAL.getKeyBinding().consumeClick()) {
+            getEntrance().getClient().getSoundManager()
+                    .playButtonClickSound();
+            new EffortlessProceduralPatternScreen(getEntrance()).attach();
         }
         if (EffortlessKeys.UNDO.getKeyBinding().consumeClick()) {
             getEntrance().getClient().getSoundManager().playButtonClickSound();
@@ -352,7 +352,7 @@ public final class EffortlessClientManager implements ClientManager {
 
         if (EffortlessKeys.EDIT_CLIPBOARD.getKeyBinding().consumeClick()) {
             getEntrance().getClient().getSoundManager().playButtonClickSound();
-            new EffortlessClipboardScreen(getEntrance()).attach();
+            new EffortlessWorkbenchClipboardScreen(getEntrance()).attach();
         }
 
         if (EffortlessKeys.EDIT_PATTERN.getKeyBinding().consumeClick()) {
@@ -390,7 +390,7 @@ public final class EffortlessClientManager implements ClientManager {
                 .map(preset -> preset.name())
                 .orElse("none");
         getPlayer().sendMessage(Effortless.getSystemMessage(
-                Text.text("Active pattern: ")
+                Text.text("Active recipe: ")
                         .append(Text.text(name).withStyle(ChatFormatting.GOLD))
         ));
     }
@@ -403,7 +403,7 @@ public final class EffortlessClientManager implements ClientManager {
         applyPatternRecipe(library);
         getPlayer().sendMessage(Effortless.getSystemMessage(
                 Text.text(
-                        "Patterns: "
+                        "Recipes: "
                                 + (library.enabled() ? "enabled" : "disabled")
                 ).withStyle(
                         library.enabled()
@@ -519,17 +519,56 @@ public final class EffortlessClientManager implements ClientManager {
             );
             storage.set(library);
             Effortless.LOGGER.info(
-                    "Migrated the active stock pattern into Pattern Workbench"
+                    "Migrated the active stock pattern into Effortless Workbench"
             );
         }
         if (applyPatternRecipe(library)) {
+            applySavedBuildTool(library.activeToolId());
             synchronizedPatternPlayer = player.getId();
             synchronizedPatternDimension = dimension;
         }
     }
 
+    public void rememberActiveBuildTool(String toolId) {
+        var storage = getEntrance().getProceduralConfigStorage();
+        storage.set(storage.get().withActiveToolId(toolId));
+    }
+
+    /** Restores only client-side tool selection; no new network type exists. */
+    private void applySavedBuildTool(String toolId) {
+        if (toolId == null || toolId.isBlank()) {
+            return;
+        }
+        if (toolId.equals("road")) {
+            startRoadEditorFromActivePattern();
+            return;
+        }
+        if (toolId.equals("tree")) {
+            startTreeEditorFromActivePattern();
+            return;
+        }
+        for (var mode : BuildMode.values()) {
+            if (!mode.getName().equals(toolId) || mode.isDisabled()) {
+                continue;
+            }
+            roadEditor.cancel();
+            treeEditor.cancel();
+            var structure = getEntrance().getConfigStorage()
+                    .getStructure(mode);
+            if (getEntrance().getStructureBuilder().setStructure(
+                    getPlayer(), structure
+            )) {
+                getEntrance().getConfigStorage().setStructure(structure);
+            }
+            return;
+        }
+        Effortless.LOGGER.warn(
+                "Ignoring unknown saved client tool '{}'", toolId
+        );
+    }
+
     public void onRenderGui(Renderer renderer, float deltaTick) {
-        if (getRunningClient().getPanel() != null && !(getRunningClient().getPanel() instanceof EffortlessStructureScreen)) {
+        if (getRunningClient().getPanel() != null) {
             return;
         }
 

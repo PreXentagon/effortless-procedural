@@ -35,12 +35,14 @@ final class ProceduralWorkbenchSession {
     private final Map<UUID, TextDraft> textDrafts = new HashMap<>();
     private final ArrayDeque<Snapshot> undoHistory = new ArrayDeque<>();
     private final ArrayDeque<Snapshot> redoHistory = new ArrayDeque<>();
+    private String activeToolIdBaseline;
     private DirtySnapshot savedSnapshot;
     private Snapshot mutationStart;
     private int mutationDepth;
 
     ProceduralWorkbenchSession(ProceduralPatternLibrary library) {
         this.library = library;
+        this.activeToolIdBaseline = library.activeToolId();
         this.selectedPresetId = library.activePreset()
                 .or(() -> library.presets().stream().findFirst())
                 .orElseThrow(() -> new IllegalArgumentException(
@@ -183,7 +185,8 @@ final class ProceduralWorkbenchSession {
                     library.enabled(),
                     library.activePresetId(),
                     reordered,
-                    library.fieldAssets()
+                    library.fieldAssets(),
+                    library.activeToolId()
             );
         });
     }
@@ -199,7 +202,7 @@ final class ProceduralWorkbenchSession {
 
     void replaceLibrary(ProceduralPatternLibrary imported) {
         mutate(() -> {
-            library = imported;
+            library = imported.withActiveToolId(activeToolIdBaseline);
             textDrafts.clear();
             selectedPresetId = imported.activePreset()
                     .or(() -> imported.presets().stream().findFirst())
@@ -208,6 +211,17 @@ final class ProceduralWorkbenchSession {
                     ))
                     .id();
         });
+    }
+
+    void setActiveToolId(String value) {
+        activeToolIdBaseline = value;
+        library = library.withActiveToolId(value);
+        if (savedSnapshot != null) {
+            savedSnapshot = new DirtySnapshot(
+                    savedSnapshot.library().withActiveToolId(value),
+                    savedSnapshot.changedTextDrafts()
+            );
+        }
     }
 
     ProceduralPatternLibrary materialize() {
@@ -220,7 +234,7 @@ final class ProceduralWorkbenchSession {
             String name = draft.name().trim();
             if (name.isEmpty()) {
                 throw new IllegalArgumentException(
-                        "Pattern name cannot be empty"
+                        "Recipe name cannot be empty"
                 );
             }
             long seed = parseRequiredLong(draft.seed(), "Seed");
@@ -634,11 +648,14 @@ final class ProceduralWorkbenchSession {
                 changedDrafts.put(entry.getKey(), entry.getValue());
             }
         }
-        return new DirtySnapshot(library, changedDrafts);
+        return new DirtySnapshot(
+                library.withActiveToolId(activeToolIdBaseline),
+                changedDrafts
+        );
     }
 
     private void restore(Snapshot value) {
-        library = value.library();
+        library = value.library().withActiveToolId(activeToolIdBaseline);
         selectedPresetId = value.selectedPresetId();
         textDrafts.clear();
         textDrafts.putAll(value.textDrafts());

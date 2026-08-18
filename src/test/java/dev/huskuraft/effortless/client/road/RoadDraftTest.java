@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 
+import dev.huskuraft.effortless.client.editor.ControlPointDraft;
 import org.junit.jupiter.api.Test;
 
 class RoadDraftTest {
@@ -15,7 +16,7 @@ class RoadDraftTest {
         var second = new RoadPoint(10.5, 1.5, 0.5);
         var curve = new RoadPoint(5.5, 1.5, 4.5);
 
-        var draft = RoadDraft.EMPTY.append(first).append(second)
+        var draft = ControlPointDraft.EMPTY.append(first).append(second)
                 .insertAfter(0, curve);
         assertEquals(List.of(first, curve, second), draft.points());
         assertEquals(1, draft.selectedIndex());
@@ -24,13 +25,13 @@ class RoadDraftTest {
         draft = draft.moveSelected(moved);
         assertEquals(moved, draft.points().get(1));
 
-        draft = draft.deleteSelected();
+        draft = draft.deleteSelected(0, 2);
         assertEquals(List.of(first, second), draft.points());
     }
 
     @Test
     void nearestPointUsesConfiguredRadius() {
-        var draft = new RoadDraft(List.of(
+        var draft = new ControlPointDraft(List.of(
                 new RoadPoint(0.5, 0.5, 0.5),
                 new RoadPoint(10.5, 0.5, 0.5)
         ), -1);
@@ -55,7 +56,7 @@ class RoadDraftTest {
                 new RoadPoint(5.5, 0.5, 3.5),
                 new RoadPoint(10.5, 0.5, 0.5)
         );
-        var deselected = new RoadDraft(points, 1).clearSelection();
+        var deselected = new ControlPointDraft(points, 1).clearSelection();
 
         assertEquals(points, deselected.points());
         assertEquals(-1, deselected.selectedIndex());

@@ -11,6 +11,7 @@ import java.util.Set;
 import dev.huskuraft.effortless.client.pattern.procedural.GridPosition;
 import dev.huskuraft.effortless.client.pattern.procedural.StableRandom;
 import dev.huskuraft.effortless.client.pattern.procedural.StructuralGeometry;
+import dev.huskuraft.effortless.client.pattern.procedural.VoxelPath;
 import dev.huskuraft.effortless.client.road.RoadCell;
 import dev.huskuraft.effortless.client.road.RoadPoint;
 import dev.huskuraft.effortless.client.road.RoadSpline;
@@ -865,25 +866,14 @@ public final class TreeVoxelizer {
             double pathEnd,
             int maximumCells
     ) {
-        var current = grid(start);
-        var target = grid(end);
-        int deltaX = target.x() - current.x();
-        int deltaY = target.y() - current.y();
-        int deltaZ = target.z() - current.z();
-        int absoluteX = Math.abs(deltaX);
-        int absoluteY = Math.abs(deltaY);
-        int absoluteZ = Math.abs(deltaZ);
-        int total = absoluteX + absoluteY + absoluteZ;
-        int stepX = Integer.compare(deltaX, 0);
-        int stepY = Integer.compare(deltaY, 0);
-        int stepZ = Integer.compare(deltaZ, 0);
-        int usedX = 0;
-        int usedY = 0;
-        int usedZ = 0;
+        var spine = VoxelPath.faceConnectedLine(
+                grid(start), grid(end), VoxelPath.TieOrder.Y_X_Z
+        );
         var tangent = end.sub(start).normalize();
-
-        for (int step = 0; step <= total; step++) {
-            double progress = total == 0 ? 0.0 : (double) step / total;
+        int last = Math.max(1, spine.size() - 1);
+        for (int step = 0; step < spine.size(); step++) {
+            var current = spine.get(step);
+            double progress = (double) step / last;
             double path = pathStart + (pathEnd - pathStart) * progress;
             double lateral = role == TreeCell.Role.TRUNK ? 0.0
                     : role == TreeCell.Role.BRANCH ? 0.35
@@ -897,29 +887,6 @@ public final class TreeVoxelizer {
             merge(cells, new TreeCell(current, role, geometry), -0.25);
             if (cells.size() > maximumCells) {
                 return false;
-            }
-            if (current.equals(target)) {
-                break;
-            }
-
-            double nextX = usedX >= absoluteX
-                    ? Double.POSITIVE_INFINITY
-                    : (usedX + 0.5) / Math.max(1.0, absoluteX);
-            double nextY = usedY >= absoluteY
-                    ? Double.POSITIVE_INFINITY
-                    : (usedY + 0.5) / Math.max(1.0, absoluteY);
-            double nextZ = usedZ >= absoluteZ
-                    ? Double.POSITIVE_INFINITY
-                    : (usedZ + 0.5) / Math.max(1.0, absoluteZ);
-            if (nextY <= nextX && nextY <= nextZ) {
-                current = current.offset(0, stepY, 0);
-                usedY++;
-            } else if (nextX <= nextZ) {
-                current = current.offset(stepX, 0, 0);
-                usedX++;
-            } else {
-                current = current.offset(0, 0, stepZ);
-                usedZ++;
             }
         }
         return true;

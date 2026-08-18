@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.function.Consumer;
 
 import dev.huskuraft.effortless.EffortlessClient;
+import dev.huskuraft.effortless.client.pattern.procedural.ProceduralMaterial;
 import dev.huskuraft.effortless.screen.item.EffortlessItemPickerScreen;
 import dev.huskuraft.universal.api.core.BlockItem;
 import dev.huskuraft.universal.api.gui.AbstractPanelScreen;
@@ -19,6 +20,8 @@ final class EffortlessAllowedItemsScreen extends EffortlessProceduralScreen {
     private final List<String> working;
     private TextRuleList<String> entries;
     private Button deleteButton;
+    private Button skipButton;
+    private Button eraserButton;
 
     EffortlessAllowedItemsScreen(
             Entrance entrance,
@@ -74,7 +77,7 @@ final class EffortlessAllowedItemsScreen extends EffortlessProceduralScreen {
                 entries.reset(working);
             }
         }).setBoundsGrid(
-                getLeft(), getTop(), getWidth(), getHeight(), 1f, 0f, 0.5f
+                getLeft(), getTop(), getWidth(), getHeight(), 1f, 0f, 0.25f
         ).build());
         addWidget(Button.builder(getEntrance(), Text.text("Add"), b ->
                 new EffortlessItemPickerScreen(
@@ -90,7 +93,21 @@ final class EffortlessAllowedItemsScreen extends EffortlessProceduralScreen {
                         }
                 ).attach()
         ).setBoundsGrid(
-                getLeft(), getTop(), getWidth(), getHeight(), 1f, 0.5f, 0.5f
+                getLeft(), getTop(), getWidth(), getHeight(), 1f, 0.25f, 0.25f
+        ).build());
+        skipButton = addWidget(Button.builder(
+                getEntrance(), Text.text("Skip"), b -> addSpecial(
+                        ProceduralMaterial.SKIP_ID
+                )
+        ).setBoundsGrid(
+                getLeft(), getTop(), getWidth(), getHeight(), 1f, 0.5f, 0.25f
+        ).build());
+        eraserButton = addWidget(Button.builder(
+                getEntrance(), Text.text("Eraser"), b -> addSpecial(
+                        ProceduralMaterial.ERASER_ID
+                )
+        ).setBoundsGrid(
+                getLeft(), getTop(), getWidth(), getHeight(), 1f, 0.75f, 0.25f
         ).build());
         addWidget(Button.builder(getEntrance(), Text.text("Discard"), b ->
                 discardAndDetach()
@@ -103,5 +120,18 @@ final class EffortlessAllowedItemsScreen extends EffortlessProceduralScreen {
     @Override
     public void onReload() {
         deleteButton.setActive(entries.hasSelected() && entries.items().size() > 1);
+        skipButton.setActive(!working.contains(ProceduralMaterial.SKIP_ID));
+        eraserButton.setActive(!working.contains(ProceduralMaterial.ERASER_ID));
+    }
+
+    private void addSpecial(String itemId) {
+        if (working.contains(itemId)) {
+            return;
+        }
+        int index = entries.hasSelected()
+                ? entries.indexOfSelected() + 1
+                : working.size();
+        working.add(index, itemId);
+        entries.reset(working);
     }
 }

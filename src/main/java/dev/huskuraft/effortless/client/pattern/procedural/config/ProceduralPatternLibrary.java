@@ -12,7 +12,8 @@ public record ProceduralPatternLibrary(
         boolean enabled,
         UUID activePresetId,
         List<ProceduralPatternPreset> presets,
-        List<ProceduralFieldAsset> fieldAssets
+        List<ProceduralFieldAsset> fieldAssets,
+        String activeToolId
 ) {
 
     public static final int MAX_COMPOSITION_DEPTH = 64;
@@ -20,7 +21,8 @@ public record ProceduralPatternLibrary(
             false,
             ProceduralPatternPreset.DEFAULT.id(),
             List.of(ProceduralPatternPreset.DEFAULT),
-            List.of()
+            List.of(),
+            ""
     );
 
     public ProceduralPatternLibrary {
@@ -30,6 +32,7 @@ public record ProceduralPatternLibrary(
         );
         presets = List.copyOf(presets);
         fieldAssets = List.copyOf(fieldAssets);
+        activeToolId = activeToolId == null ? "" : activeToolId;
         var ids = new java.util.HashSet<UUID>();
         for (var preset : presets) {
             if (!ids.add(preset.id())) {
@@ -53,7 +56,16 @@ public record ProceduralPatternLibrary(
             UUID activePresetId,
             List<ProceduralPatternPreset> presets
     ) {
-        this(enabled, activePresetId, presets, List.of());
+        this(enabled, activePresetId, presets, List.of(), "");
+    }
+
+    public ProceduralPatternLibrary(
+            boolean enabled,
+            UUID activePresetId,
+            List<ProceduralPatternPreset> presets,
+            List<ProceduralFieldAsset> fieldAssets
+    ) {
+        this(enabled, activePresetId, presets, fieldAssets, "");
     }
 
     public Optional<ProceduralPatternPreset> activePreset() {
@@ -102,7 +114,8 @@ public record ProceduralPatternLibrary(
                 value,
                 activePresetId,
                 presets,
-                fieldAssets
+                fieldAssets,
+                activeToolId
         );
     }
 
@@ -110,7 +123,15 @@ public record ProceduralPatternLibrary(
         if (presets.stream().noneMatch(preset -> preset.id().equals(value))) {
             throw new IllegalArgumentException("Unknown procedural preset " + value);
         }
-        return new ProceduralPatternLibrary(enabled, value, presets, fieldAssets);
+        return new ProceduralPatternLibrary(
+                enabled, value, presets, fieldAssets, activeToolId
+        );
+    }
+
+    public ProceduralPatternLibrary withActiveToolId(String value) {
+        return new ProceduralPatternLibrary(
+                enabled, activePresetId, presets, fieldAssets, value
+        );
     }
 
     public ProceduralPatternLibrary put(ProceduralPatternPreset preset) {
@@ -131,17 +152,26 @@ public record ProceduralPatternLibrary(
                 enabled,
                 activePresetId,
                 result,
-                fieldAssets
+                fieldAssets,
+                activeToolId
         );
     }
 
     public ProceduralPatternLibrary remove(UUID id) {
         var result = presets.stream().filter(preset -> !preset.id().equals(id)).toList();
         if (result.isEmpty()) {
-            return DEFAULT.withEnabled(enabled);
+            return new ProceduralPatternLibrary(
+                    enabled,
+                    ProceduralPatternPreset.DEFAULT.id(),
+                    List.of(ProceduralPatternPreset.DEFAULT),
+                    fieldAssets,
+                    activeToolId
+            );
         }
         var active = activePresetId.equals(id) ? result.get(0).id() : activePresetId;
-        return new ProceduralPatternLibrary(enabled, active, result, fieldAssets);
+        return new ProceduralPatternLibrary(
+                enabled, active, result, fieldAssets, activeToolId
+        );
     }
 
     public Optional<ProceduralFieldAsset> fieldAsset(String id) {
@@ -173,7 +203,8 @@ public record ProceduralPatternLibrary(
                 enabled,
                 activePresetId,
                 presets,
-                result
+                result,
+                activeToolId
         );
     }
 
@@ -196,7 +227,8 @@ public record ProceduralPatternLibrary(
                 enabled,
                 activePresetId,
                 changedPresets,
-                assets
+                assets,
+                activeToolId
         );
     }
 

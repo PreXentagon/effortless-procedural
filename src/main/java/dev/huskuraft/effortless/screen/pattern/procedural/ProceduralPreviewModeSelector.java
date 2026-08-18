@@ -17,9 +17,9 @@ import dev.huskuraft.universal.api.renderer.Renderer;
 import dev.huskuraft.universal.api.text.Text;
 
 /**
- * Preview-local shape toolbar. Every build mode remains visible; clicking the
- * selected mode toggles one compact horizontal rail containing its preview
- * orientation and stock feature variants.
+ * Authoritative workbench tool bar. Every build mode remains visible; choosing
+ * one changes both the live preview and the actual placement tool. Clicking
+ * the selected mode toggles a compact horizontal rail of its variants.
  */
 final class ProceduralPreviewModeSelector extends AbstractWidget {
 
@@ -42,6 +42,10 @@ final class ProceduralPreviewModeSelector extends AbstractWidget {
     private ProceduralPreviewType hoveredMode;
     private BuildFeature hoveredFeature;
     private ClientToolSubtype hoveredSubtype;
+    private int modeScrollPixels;
+    private int subtypeScrollPixels;
+    private int subtypeContentWidth;
+    private boolean modeScrollInitialized;
 
     ProceduralPreviewModeSelector(
             Entrance entrance,
@@ -100,12 +104,22 @@ final class ProceduralPreviewModeSelector extends AbstractWidget {
 
     private void renderModeToolbar(Renderer renderer, int mouseX, int mouseY) {
         var selected = mode.get();
+        if (!modeScrollInitialized) {
+            revealSelectedMode(selected);
+            modeScrollInitialized = true;
+        }
+        modeScrollPixels = Math.clamp(
+                modeScrollPixels, 0, maximumModeScroll()
+        );
         renderer.renderRect(
                 getX(),
                 getY(),
                 getRight(),
                 getY() + TOOLBAR_HEIGHT,
                 0xE0181C20
+        );
+        renderer.pushScissor(
+                getX(), getY(), getWidth(), TOOLBAR_HEIGHT
         );
         for (int index = 0; index < MODES.size(); index++) {
             var candidate = MODES.get(index);
@@ -153,6 +167,14 @@ final class ProceduralPreviewModeSelector extends AbstractWidget {
                     candidate.tintColor().getRGB() | 0xFF000000
             );
         }
+        renderer.popScissor();
+        renderOverflowHints(
+                renderer,
+                getY(),
+                TOOLBAR_HEIGHT,
+                modeScrollPixels,
+                maximumModeScroll()
+        );
     }
 
     private void renderSubtypeRail(
@@ -175,7 +197,15 @@ final class ProceduralPreviewModeSelector extends AbstractWidget {
                 top + SUBTYPE_HEIGHT,
                 mode.get().tintColor().getRGB() | 0xFF000000
         );
-        int cursor = getX() + 7;
+        subtypeScrollPixels = Math.clamp(
+                subtypeScrollPixels,
+                0,
+                Math.max(0, subtypeContentWidth - getWidth())
+        );
+        renderer.pushScissor(
+                getX(), top, getWidth(), SUBTYPE_HEIGHT
+        );
+        int cursor = getX() + 7 - subtypeScrollPixels;
         if (mode.get().isClientOnly()) {
             cursor = renderLabel(renderer, "TYPE", cursor, top);
             for (var value : clientSubtypes(mode.get())) {
@@ -205,6 +235,14 @@ final class ProceduralPreviewModeSelector extends AbstractWidget {
                         0xFFE4E7E9, true
                 );
             }
+            subtypeContentWidth = cursor + subtypeScrollPixels
+                    - getX() + 8;
+            renderer.popScissor();
+            renderOverflowHints(
+                    renderer, top, SUBTYPE_HEIGHT,
+                    subtypeScrollPixels,
+                    Math.max(0, subtypeContentWidth - getWidth())
+            );
             return;
         }
         var orientations = PreviewOrientation.choices(mode.get());
@@ -310,7 +348,46 @@ final class ProceduralPreviewModeSelector extends AbstractWidget {
                     getRight() - 7,
                     top + 10,
                     0xFFE4E7E9,
-                    true
+                true
+            );
+        }
+        subtypeContentWidth = cursor + subtypeScrollPixels
+                - getX() + 8;
+        renderer.popScissor();
+        renderOverflowHints(
+                renderer, top, SUBTYPE_HEIGHT,
+                subtypeScrollPixels,
+                Math.max(0, subtypeContentWidth - getWidth())
+        );
+    }
+
+    private void renderOverflowHints(
+            Renderer renderer,
+            int top,
+            int height,
+            int scroll,
+            int maximum
+    ) {
+        if (scroll > 0) {
+            renderer.renderRect(
+                    getX(), top, getX() + 13, top + height,
+                    0xE80C0F12
+            );
+            renderer.renderTextFromCenter(
+                    getTypeface(), Text.text("<"),
+                    getX() + 6, top + height / 2 - 4,
+                    0xFFC4CBD1, true
+            );
+        }
+        if (scroll < maximum) {
+            renderer.renderRect(
+                    getRight() - 13, top, getRight(), top + height,
+                    0xE80C0F12
+            );
+            renderer.renderTextFromCenter(
+                    getTypeface(), Text.text(">"),
+                    getRight() - 7, top + height / 2 - 4,
+                    0xFFC4CBD1, true
             );
         }
     }
@@ -360,24 +437,52 @@ final class ProceduralPreviewModeSelector extends AbstractWidget {
             return false;
         }
         if (mouseY >= getY() && mouseY < getY() + TOOLBAR_HEIGHT) {
-            int index = Math.min(
-                    MODES.size() - 1,
-                    Math.max(
-                            0,
-                            (int) ((mouseX - getX()) * MODES.size()
-                                    / getWidth())
-                    )
-            );
-            click();
-            modeConsumer.accept(MODES.get(index));
-            return true;
+            int maximum = maximumModeScroll();
+            if (mouseX < getX() + 13 && modeScrollPixels > 0) {
+                click();
+                modeScrollPixels = Math.max(
+                        0, modeScrollPixels - modeCellWidth() * 3
+                );
+                return true;
+            }
+            if (mouseX >= getRight() - 13
+                    && modeScrollPixels < maximum) {
+                click();
+                modeScrollPixels = Math.min(
+                        maximum, modeScrollPixels + modeCellWidth() * 3
+                );
+                return true;
+            }
+            for (int index = 0; index < MODES.size(); index++) {
+                if (mouseX >= modeLeft(index)
+                        && mouseX < modeLeft(index + 1)) {
+                    click();
+                    modeConsumer.accept(MODES.get(index));
+                    subtypeScrollPixels = 0;
+                    return true;
+                }
+            }
+            return false;
         }
         if (!expanded.get()
                 || mouseY < getY() + TOOLBAR_HEIGHT
                 || mouseY >= getBottom()) {
             return false;
         }
-        int cursor = getX() + 7;
+        int maximum = Math.max(0, subtypeContentWidth - getWidth());
+        if (mouseX < getX() + 13 && subtypeScrollPixels > 0) {
+            click();
+            subtypeScrollPixels = Math.max(0, subtypeScrollPixels - 72);
+            return true;
+        }
+        if (mouseX >= getRight() - 13 && subtypeScrollPixels < maximum) {
+            click();
+            subtypeScrollPixels = Math.min(
+                    maximum, subtypeScrollPixels + 72
+            );
+            return true;
+        }
+        int cursor = getX() + 7 - subtypeScrollPixels;
         if (mode.get().isClientOnly()) {
             cursor += getTypeface().measureWidth("TYPE") + 7;
             for (var value : clientSubtypes(mode.get())) {
@@ -425,12 +530,71 @@ final class ProceduralPreviewModeSelector extends AbstractWidget {
     }
 
     @Override
+    public boolean onMouseScrolled(
+            double mouseX,
+            double mouseY,
+            double amountX,
+            double amountY
+    ) {
+        if (mouseX < getX() || mouseX >= getRight()
+                || mouseY < getY() || mouseY >= getBottom()) {
+            return false;
+        }
+        double amount = Math.abs(amountX) > Math.abs(amountY)
+                ? amountX : amountY;
+        int direction = (int) Math.signum(amount);
+        if (direction == 0) {
+            return false;
+        }
+        if (mouseY < getY() + TOOLBAR_HEIGHT) {
+            modeScrollPixels = Math.clamp(
+                    modeScrollPixels - direction * modeCellWidth() * 2,
+                    0,
+                    maximumModeScroll()
+            );
+        } else {
+            subtypeScrollPixels = Math.clamp(
+                    subtypeScrollPixels - direction * 48,
+                    0,
+                    Math.max(0, subtypeContentWidth - getWidth())
+            );
+        }
+        return true;
+    }
+
+    @Override
     public List<Text> getTooltip() {
         return List.of();
     }
 
     private int modeLeft(int index) {
-        return getX() + index * getWidth() / MODES.size();
+        return getX() + index * modeCellWidth() - modeScrollPixels;
+    }
+
+    private int modeCellWidth() {
+        return Math.clamp(getWidth() / 8, 30, 42);
+    }
+
+    private int maximumModeScroll() {
+        return Math.max(0, MODES.size() * modeCellWidth() - getWidth());
+    }
+
+    private void revealSelectedMode(ProceduralPreviewType selected) {
+        int index = MODES.indexOf(selected);
+        if (index < 0) {
+            return;
+        }
+        int cellWidth = modeCellWidth();
+        int left = index * cellWidth;
+        int right = left + cellWidth;
+        if (left < modeScrollPixels) {
+            modeScrollPixels = left;
+        } else if (right > modeScrollPixels + getWidth()) {
+            modeScrollPixels = right - getWidth();
+        }
+        modeScrollPixels = Math.clamp(
+                modeScrollPixels, 0, maximumModeScroll()
+        );
     }
 
     private void click() {
